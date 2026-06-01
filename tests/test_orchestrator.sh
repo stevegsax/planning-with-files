@@ -37,6 +37,10 @@ cat >"$BIN/noprogress" <<'EOF'
 #!/usr/bin/env bash
 printf '{"subtype":"success"}\n'
 EOF
+cat >"$BIN/noprogress_maxturns" <<'EOF'
+#!/usr/bin/env bash
+printf '{"subtype":"error_max_turns"}\n'
+EOF
 cat >"$BIN/sessionerror" <<'EOF'
 #!/usr/bin/env bash
 printf '{"subtype":"error_during_execution"}\n'
@@ -47,7 +51,7 @@ ORCH_OUT=""
 orch_run() {  # $1 = launcher name ; env limits set by caller
   local base; base="$(mktemp -d)"
   export PWFG_PLAN="$FIXTURE"
-  unset PWFG_SCHEMA
+  unset PWFG_SCHEMA PWFG_TURNS_PER_SESSION
   export PWFG_WORKSPACE="$base/ws"; export PWFG_STATE_DIR="$base/state"
   mkdir -p "$PWFG_WORKSPACE"
   export PWFG_LAUNCH_CMD="$BIN/$1"
@@ -94,6 +98,31 @@ export PWFG_MAX_SESSIONS=5 PWFG_STALL_LIMIT=2
 orch_run sessionerror
 assert_ok  "RESULT is HUMAN NEEDED" "printf '%s' \"\$ORCH_OUT\" | grep -q 'RESULT: HUMAN NEEDED'"
 assert_ok  "BLOCKED cites the error subtype" "grep -q 'error_during_execution' \"$PWFG_STATE_DIR/BLOCKED\""
+
+echo "== turn budget: formula scales with progress (deterministic) =="
+# shellcheck disable=SC1091
+. "$SKILL/lib/common.sh"
+unset PWFG_TURNS_PER_SESSION PWFG_TURNS_BASE PWFG_TURNS_PER_PHASE PWFG_TURNS_MAX
+assert_eq  "base budget at 0 green" "$(pwfg_session_budget 0 0)" "12"
+assert_eq  "scales +3 per green phase" "$(pwfg_session_budget 3 0)" "21"
+assert_eq  "clamps at max 24" "$(pwfg_session_budget 10 0)" "24"
+assert_eq  "reactive extra adds on top" "$(pwfg_session_budget 2 4)" "22"
+assert_eq  "fixed PWFG_TURNS_PER_SESSION overrides scaling" "$(PWFG_TURNS_PER_SESSION=7 pwfg_session_budget 5 8)" "7"
+
+echo "== turn budget: grows with progress across sessions =="
+export PWFG_MAX_SESSIONS=5 PWFG_STALL_LIMIT=2
+orch_run progress
+assert_ok  "session 1 starts at base (12t)" "printf '%s' \"\$ORCH_OUT\" | grep -q 'budget 12t'"
+assert_ok  "budget grows as phases complete (15t)" "printf '%s' \"\$ORCH_OUT\" | grep -q 'budget 15t'"
+assert_ok  "budget grows further (18t)" "printf '%s' \"\$ORCH_OUT\" | grep -q 'budget 18t'"
+
+echo "== turn budget: reactive bump then escalate at max =="
+export PWFG_MAX_SESSIONS=8 PWFG_STALL_LIMIT=2
+orch_run noprogress_maxturns
+assert_ok  "reactive bump raises the budget (16t)" "printf '%s' \"\$ORCH_OUT\" | grep -q 'budget 16t'"
+assert_ok  "budget climbs to the max (24t)" "printf '%s' \"\$ORCH_OUT\" | grep -q 'budget 24t'"
+assert_ok  "escalates once max budget can't finish" "printf '%s' \"\$ORCH_OUT\" | grep -q 'RESULT: HUMAN NEEDED'"
+assert_ok  "BLOCKED cites too-big-even-at-max" "grep -qi 'too large' \"$PWFG_STATE_DIR/BLOCKED\""
 
 echo "== handoff narrator: transcript digest (deterministic part) =="
 # shellcheck disable=SC1091

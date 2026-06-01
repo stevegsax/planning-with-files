@@ -140,6 +140,21 @@ pwfg_remaining_ids() {
   pwfg_phase_ids | grep -vxF -f <(printf '%s\n' "$green")
 }
 
+# Per-session turn budget that SCALES WITH PROGRESS. The orientation tax grows as
+# the codebase grows, so later sessions (more green phases) get more turns:
+#   budget = clamp(base + per_phase * green_count + extra, base, max)
+# `extra` is a reactive accumulator the orchestrator raises when a session runs out
+# of turns with no progress. If PWFG_TURNS_PER_SESSION is set, that fixed value is
+# used and scaling is disabled. Args: <green_count> [extra].
+pwfg_session_budget() {
+  if [ -n "${PWFG_TURNS_PER_SESSION:-}" ]; then printf '%s\n' "$PWFG_TURNS_PER_SESSION"; return; fi
+  local base="${PWFG_TURNS_BASE:-12}" per="${PWFG_TURNS_PER_PHASE:-3}" max="${PWFG_TURNS_MAX:-24}"
+  local green="${1:-0}" extra="${2:-0}" budget
+  budget=$(( base + per * green + extra ))
+  [ "$budget" -gt "$max" ] && budget="$max"
+  printf '%s\n' "$budget"
+}
+
 # Locate a session's transcript jsonl by session id (portable; no fd dependency).
 pwfg_find_transcript() {
   local cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"

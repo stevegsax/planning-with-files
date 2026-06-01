@@ -519,6 +519,14 @@ addressing the DEFERRED supervisor:
   turn bound should SCALE WITH the codebase (the orientation floor rises as more is
   committed) — a static cap is the footgun, derived pointers are a modest (~1-4
   calls/session) secondary help, not the fix.
+- BUILT (2026-06-01): the turn budget now SCALES WITH PROGRESS —
+  clamp(base + per_phase*green_count + reactive_extra, base, max), defaults
+  12/3/24/4. Proactive (more green phases -> more turns) + reactive (a no-progress
+  max-turns session raises reactive_extra and retries instead of stalling).
+  Escalates to a human only when even the MAX budget can't finish a phase. Live:
+  the ledger completed in 3 sessions from base 12 (12 -> reactive 16 -> scaled 24)
+  with no hand-picked cap. PWFG_TURNS_PER_SESSION still forces a fixed budget. This
+  is the decisive lever the forensics identified; derived pointers stay secondary.
 - Secrets/config injection at boot (trust anchor now that nothing persists)
 - Tamper-evident audit log vs agent-written summary (for security monitoring)
 - SSH access control + tmux input-collision when human attaches

@@ -111,28 +111,40 @@ disk. It stops on: gate green (done), agent 3-strike escalation, a cross-session
 **stall** (no new green in N sessions → human), an **infra error**, or a **session
 budget** cap.
 
-It **never edits the locked plan.** A phase too big for one window surfaces as a
-stall and escalates to a human to either raise `PWFG_TURNS_PER_SESSION` or
-re-author the plan into smaller, independently-gated phases — splitting a phase
-means splitting its proof, which is a governance act, not an autonomous one.
+It **never edits the locked plan.** A phase too big even at the *maximum*
+per-session budget surfaces as a stall and escalates to a human to re-author the
+plan into smaller, independently-gated phases — splitting a phase means splitting
+its proof, which is a governance act, not an autonomous one.
 
-> Each fresh session pays an *orientation tax* (re-reading the handoff/plan/tests)
-> before it can make progress — and that tax **grows as the codebase grows**, since
-> later sessions re-read more committed code. A fixed turn cap that's fine early can
-> false-stall on a late phase (observed on the ledger at cap 8). Set
-> `PWFG_TURNS_PER_SESSION` above the *late-stage* tax, not just the early one.
+### The turn budget scales with progress
 
-Transcript forensics on real runs showed the tax is dominated by re-reading file
-*contents* to rebuild understanding (in the blocked run, 4 of 6 sessions wrote
-zero code; orientation:implementation ran ~11–15:1) — and that the **turn budget
-is the decisive lever** (8 blocked, 16 completed). As a secondary help, the
-handoff carries a deterministic **"Files for this phase"** block — `EDIT` (the
-module to change, only if it exists on disk), `PROVE WITH` (the test/proof path),
-and the test's own import lines verbatim — derived from the locked plan + proof so
-it can't go stale or point wrong, with a *soft* "start here, read elsewhere only if
-a symbol's missing" nudge. (A repo TOC or source map was rejected for this
-plan-driven repo: the plan already navigates, and stubs + locked tests already pin
-every signature.)
+Transcript forensics on real runs showed the orientation tax is dominated by
+re-reading file *contents* to rebuild understanding (in a blocked run, 4 of 6
+sessions wrote zero code; orientation:implementation ran ~11–15:1), that the tax
+**grows as the codebase grows**, and that the **turn budget is the decisive lever**
+(at 8 turns the ledger blocked; at 16 it completed). So the budget is no longer a
+fixed cap — it **scales with progress**:
+
+```
+budget = clamp(base + per_phase × green_count + reactive_extra, base, max)
+```
+
+Later phases (more committed code) get more turns *proactively*; and if a session
+runs out of turns with **no** progress, the orchestrator raises `reactive_extra`
+and retries rather than counting a stall — automating the old "raise the cap"
+advice. It escalates to a human only once even the **max** budget can't finish a
+phase. Knobs: `PWFG_TURNS_BASE` (12), `PWFG_TURNS_PER_PHASE` (3), `PWFG_TURNS_MAX`
+(24), `PWFG_TURNS_BUMP` (4); set `PWFG_TURNS_PER_SESSION` to force a fixed budget.
+Live: the ledger completed in 3 sessions from a base of 12 (12 → reactive 16 →
+scaled 24) with no hand-picked cap.
+
+As a *secondary* help, the handoff carries a deterministic **"Files for this
+phase"** block — `EDIT` (the module, only if it exists on disk), `PROVE WITH` (the
+test/proof path), and the test's own import lines verbatim — derived from the
+locked plan + proof so it can't go stale or point wrong, with a *soft* "start here,
+read elsewhere only if a symbol's missing" nudge. (A repo TOC or source map was
+rejected for this plan-driven repo: the plan already navigates, and stubs + locked
+tests already pin every signature.)
 
 The handoff backbone is deterministic. An **optional LLM narrator**
 (`handoff-narrate.sh`, enabled with `PWFG_NARRATE=1`) reads the just-ended
@@ -144,9 +156,10 @@ so a wrong narrative can't fake progress; it no-ops cleanly when disabled or whe
 no transcript is found. The orchestrator also logs per-session and total
 `total_cost_usd` from the json.
 
-Knobs: `PWFG_TURNS_PER_SESSION` (default 12), `PWFG_MAX_SESSIONS` (10),
-`PWFG_STALL_LIMIT` (2), `PWFG_STOP_AT_CHECKPOINT` (1), `PWFG_GIT_CHECKPOINTS` (1),
-`PWFG_NARRATE` (0), `PWFG_NARRATE_MODEL` (haiku).
+Knobs: turn budget `PWFG_TURNS_{BASE,PER_PHASE,MAX,BUMP}` (12/3/24/4, or
+`PWFG_TURNS_PER_SESSION` to fix it), `PWFG_MAX_SESSIONS` (10), `PWFG_STALL_LIMIT`
+(2), `PWFG_STOP_AT_CHECKPOINT` (1), `PWFG_GIT_CHECKPOINTS` (1), `PWFG_NARRATE` (0),
+`PWFG_NARRATE_MODEL` (haiku).
 
 ## What the gate does and does not guarantee (P0)
 

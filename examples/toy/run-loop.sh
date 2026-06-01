@@ -7,14 +7,12 @@
 # composition; the multi-session LOGIC (checkpoints, stall->human, budget) is proven
 # deterministically in tests/test_orchestrator.sh.
 #
-# NOTE: each fresh session pays an orientation tax (re-reading the handoff/plan/
-# tests) before it can make progress, so a too-low turn cap will false-stall before
-# the first checkpoint. The default below clears that tax for this toy.
+# The per-session turn budget scales with progress by default (set
+# PWFG_TURNS_PER_SESSION to force a fixed value).
 #
 # Usage:  examples/toy/run-loop.sh
 # Env:    ANTHROPIC_API_KEY (required)   PWFG_MODEL (default: sonnet)
-#         PWFG_TURNS_PER_SESSION (default: 12)  PWFG_MAX_SESSIONS (default: 8)
-#         PWFG_STALL_LIMIT (default: 2)
+#         PWFG_MAX_SESSIONS (default: 8)   PWFG_STALL_LIMIT (default: 2)
 
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -44,14 +42,13 @@ export PWFG_SCHEMA="$SKILL/schema/plan.schema.json"
 export PWFG_WORKSPACE="$RUN_DIR"
 export PWFG_STATE_DIR="$RUN_BASE/state"
 export PWFG_STOP_AT_CHECKPOINT=1
-export PWFG_TURNS_PER_SESSION="${PWFG_TURNS_PER_SESSION:-12}"
 export PWFG_MAX_SESSIONS="${PWFG_MAX_SESSIONS:-8}"
 export PWFG_STALL_LIMIT="${PWFG_STALL_LIMIT:-2}"
 export PWFG_MODEL="${PWFG_MODEL:-sonnet}"
 export PWFG_NARRATE="${PWFG_NARRATE:-0}"            # 1 = LLM handoff narrator
 export PWFG_NARRATE_MODEL="${PWFG_NARRATE_MODEL:-haiku}"
 
-echo "== orchestrated run: turns/session=${PWFG_TURNS_PER_SESSION}, max-sessions=${PWFG_MAX_SESSIONS}, narrate=${PWFG_NARRATE} =="
+echo "== orchestrated run: budget scales with progress, max-sessions=${PWFG_MAX_SESSIONS}, narrate=${PWFG_NARRATE} =="
 "$SKILL/bin/run-loop.sh"
 
 echo

@@ -24,24 +24,29 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$DIR/../lib/common.sh"
 pwfg_need jq; pwfg_need git
 
-: "${PWFG_TURNS_PER_SESSION:=12}"
 : "${PWFG_MAX_SESSIONS:=10}"
 : "${PWFG_STALL_LIMIT:=2}"
 : "${PWFG_MODEL:=sonnet}"
 : "${PWFG_GIT_CHECKPOINTS:=1}"
+# Turn budget scales with progress (see pwfg_session_budget). PWFG_TURNS_PER_SESSION,
+# if set, overrides with a fixed budget and disables scaling.
+: "${PWFG_TURNS_BASE:=12}"
+: "${PWFG_TURNS_PER_PHASE:=3}"
+: "${PWFG_TURNS_MAX:=24}"
+: "${PWFG_TURNS_BUMP:=4}"
 
 ws="$(pwfg_workspace)"; sd="$(pwfg_state_dir)"
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { printf '[run-loop] %s\n' "$*"; }
 escalate() { { printf 'reason: %s\n' "$1"; printf 'at: %s\n' "$(now)"; shift; for l in "$@"; do printf '%s\n' "$l"; done; } >"$sd/BLOCKED"; }
 
-launch() {  # $1 = prompt -> prints session JSON ({.subtype: ...})
+launch() {  # $1 = prompt, $2 = max-turns -> prints session JSON ({.subtype: ...})
   if [ -n "${PWFG_LAUNCH_CMD:-}" ]; then
     PWFG_PROMPT="$1" bash -c "$PWFG_LAUNCH_CMD"
   else
     ( cd "$ws" && claude -p "$1" \
         --model "$PWFG_MODEL" \
-        --max-turns "$PWFG_TURNS_PER_SESSION" \
+        --max-turns "$2" \
         --dangerously-skip-permissions \
         --output-format json )
   fi
@@ -88,7 +93,7 @@ fi
 # Seed an initial handoff so even session 1 gets the derived file pointers.
 PWFG_SESSION_N=0 "$DIR/handoff.sh" >/dev/null
 
-session=0; stall=0; total_cost=0
+session=0; stall=0; total_cost=0; extra=0
 while :; do
   session=$((session + 1))
   if [ "$session" -gt "$PWFG_MAX_SESSIONS" ]; then
@@ -100,8 +105,10 @@ while :; do
   pwfg_green_ids | jq -R . | jq -s 'map(select(length > 0))' >"$sd/session_baseline.json"
   printf '{"blocks":0}\n' >"$sd/loop.json"
 
-  log "session $session start (green: $(printf '%s' "$before_green" | paste -sd',' -))"
-  session_json="$(launch "$(build_prompt)" 2>/dev/null || true)"
+  green_count="$(pwfg_green_ids | wc -l | tr -d ' ')"
+  turns="$(pwfg_session_budget "$green_count" "$extra")"
+  log "session $session start (budget ${turns}t, green: $(printf '%s' "$before_green" | paste -sd',' -))"
+  session_json="$(launch "$(build_prompt)" "$turns" 2>/dev/null || true)"
   subtype="$(printf '%s' "$session_json" | jq -r '.subtype // "unknown"' 2>/dev/null || echo unknown)"
   sid="$(printf '%s' "$session_json" | jq -r '.session_id // empty' 2>/dev/null || true)"
   cost="$(printf '%s' "$session_json" | jq -r '.total_cost_usd // 0' 2>/dev/null || echo 0)"
@@ -116,6 +123,11 @@ while :; do
     stall=0
     git_checkpoint "checkpoint: $(printf '%s' "$new_green" | paste -sd',' -) (session $session)"
     log "checkpoint: $(printf '%s' "$new_green" | paste -sd',' -)"
+  elif [ -z "${PWFG_TURNS_PER_SESSION:-}" ] && [ "$subtype" = "error_max_turns" ] && [ "$turns" -lt "$PWFG_TURNS_MAX" ]; then
+    # No progress AND ran out of turns AND we can still raise the budget: do that
+    # instead of counting it as a stall — give the bigger budget a real chance.
+    extra=$((extra + PWFG_TURNS_BUMP))
+    log "no progress + hit the turn cap — raising next session's budget by $PWFG_TURNS_BUMP"
   else
     stall=$((stall + 1))
     log "no new green (stall $stall/$PWFG_STALL_LIMIT)"
@@ -138,14 +150,14 @@ while :; do
   if [ "$stall" -ge "$PWFG_STALL_LIMIT" ]; then
     stuck="$(pwfg_remaining_ids | head -1)"
     escalate "no progress in $PWFG_STALL_LIMIT consecutive sessions on phase '$stuck'" \
-      "Each session ended before reaching a checkpoint. Likely cause: the per-session" \
-      "turn cap (PWFG_TURNS_PER_SESSION=$PWFG_TURNS_PER_SESSION) is too low to cover a" \
-      "fresh session's orientation PLUS real progress, OR the phase is genuinely too" \
-      "large for one context window." \
-      "ACTION (human): raise PWFG_TURNS_PER_SESSION, or re-author the LOCKED plan to" \
-      "split this phase into smaller, independently-gated phases. The loop does neither." \
+      "The per-session budget reached ${turns} turns and the phase still did not" \
+      "complete, so it is likely genuinely too large for one context window (the loop" \
+      "already auto-raised the budget toward its max of ${PWFG_TURNS_MAX})." \
+      "ACTION (human): re-author the LOCKED plan to split this phase into smaller," \
+      "independently-gated phases (the loop will not), or raise PWFG_TURNS_MAX if you" \
+      "believe more turns would finish it." \
       "stuck-phase: $stuck"
-    log "STALL — human needed (raise the turn cap or split the phase)"; break
+    log "STALL — human needed (phase too big even at max budget)"; break
   fi
 
   PWFG_LAST_SUBTYPE="$subtype" PWFG_SESSION_N="$session" "$DIR/handoff.sh" >/dev/null

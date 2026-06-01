@@ -93,12 +93,14 @@ means splitting its proof, which is a governance act. Note the per-session
 **orientation tax**: a fresh agent must re-read the handoff/plan/tests before it
 can make progress, so the turn cap must exceed that tax.
 
-To cut that tax, the handoff carries a deterministic **"Files for this phase"**
-block — `EDIT` (the module to change, only if it exists on disk), `PROVE WITH`
-(the test/proof path), and the test's own import lines verbatim — derived from the
-locked plan + proof, so it can't go stale or point wrong. It's a secondary lever:
-the forensic evidence is that the **turn budget** is what actually flips a long
-run from blocked to done.
+The decisive lever is the **turn budget**, which **scales with progress**:
+`clamp(base + per_phase × green_count + reactive_extra, base, max)`. Later phases
+get more turns proactively, and a session that runs out with no progress raises
+`reactive_extra` and retries (the loop escalates only when even the max budget
+can't finish a phase). As a *secondary* lever, the handoff carries a deterministic
+**"Files for this phase"** block — `EDIT` (the module, only if it exists on disk),
+`PROVE WITH` (the test/proof path), and the test's own import lines verbatim —
+derived from the locked plan + proof, so it can't go stale or point wrong.
 
 The handoff backbone is deterministic; an optional LLM narrator
 (`handoff-narrate.sh`, `PWFG_NARRATE=1`) reads the ended session's transcript and

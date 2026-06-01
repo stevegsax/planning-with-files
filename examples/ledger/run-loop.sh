@@ -5,15 +5,15 @@
 # spans several sessions: the orchestrator checkpoints each green phase, commits
 # it, regenerates HANDOFF.md (optionally narrated), and a fresh session resumes.
 #
-# NOTE: the per-session turn cap must clear a fresh session's ORIENTATION TAX,
-# which GROWS as the codebase grows (later sessions re-read more committed code
-# before they can implement). A cap of 8 spans ~6 sessions but stalls on the last
-# phase; 14+ completes in ~3. Raise it for bigger tasks.
+# The per-session turn budget SCALES WITH PROGRESS by default (it grows as phases
+# complete, since the orientation tax grows with the codebase) and bumps reactively
+# if a session runs out of turns with no progress. Set PWFG_TURNS_PER_SESSION to
+# force a fixed budget instead.
 #
 # Usage:  examples/ledger/run-loop.sh
 # Env:    ANTHROPIC_API_KEY (required)   PWFG_MODEL (default: sonnet)
-#         PWFG_TURNS_PER_SESSION (default: 14)  PWFG_MAX_SESSIONS (default: 12)
-#         PWFG_STALL_LIMIT (default: 2)   PWFG_NARRATE (default: 0)
+#         PWFG_MAX_SESSIONS (default: 12)   PWFG_STALL_LIMIT (default: 2)
+#         PWFG_NARRATE (default: 0)   PWFG_TURNS_{BASE,PER_PHASE,MAX} (12/3/24)
 
 set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -43,14 +43,13 @@ export PWFG_SCHEMA="$SKILL/schema/plan.schema.json"
 export PWFG_WORKSPACE="$RUN_DIR"
 export PWFG_STATE_DIR="$RUN_BASE/state"
 export PWFG_STOP_AT_CHECKPOINT=1
-export PWFG_TURNS_PER_SESSION="${PWFG_TURNS_PER_SESSION:-14}"
 export PWFG_MAX_SESSIONS="${PWFG_MAX_SESSIONS:-12}"
 export PWFG_STALL_LIMIT="${PWFG_STALL_LIMIT:-2}"
 export PWFG_MODEL="${PWFG_MODEL:-sonnet}"
 export PWFG_NARRATE="${PWFG_NARRATE:-0}"
 export PWFG_NARRATE_MODEL="${PWFG_NARRATE_MODEL:-haiku}"
 
-echo "== ledger run: turns/session=${PWFG_TURNS_PER_SESSION}, max-sessions=${PWFG_MAX_SESSIONS}, narrate=${PWFG_NARRATE} =="
+echo "== ledger run: budget scales with progress (base ${PWFG_TURNS_BASE:-12}..max ${PWFG_TURNS_MAX:-24}), max-sessions=${PWFG_MAX_SESSIONS}, narrate=${PWFG_NARRATE} =="
 "$SKILL/bin/run-loop.sh"
 
 echo
