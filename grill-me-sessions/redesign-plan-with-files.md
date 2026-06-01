@@ -491,6 +491,17 @@ addressing the DEFERRED supervisor:
   before the first checkpoint — the stall message names both causes (cap too low
   vs phase too big). Live: drove the toy to a tamper-verified green gate across 2
   fresh sessions (session 2 resumed from session 1's on-disk state).
+- FINDING (6-phase ledger, 2026-06-01): the orientation tax GROWS as the codebase
+  grows — later sessions re-read more committed code before they can implement, so
+  a FIXED per-session turn cap that's fine early can stall on a late, even trivial,
+  phase. Ledger at cap 8 → spanned 6 sessions, completed 5/6, then correctly
+  escalated on the last phase; at cap 16 → completed all 6 across 3 sessions
+  (resumption carried it to a green sealed gate). IMPLICATION for the real system:
+  the per-session turn/context bound should scale with task progress (or the
+  handoff must be good enough that the agent does targeted reads instead of
+  re-exploring) — a static cap is a footgun on long tasks. Also: per-session +
+  total cost is now logged from `total_cost_usd` (ledger run ~ $1.18 for 3
+  sessions), feeding the Branch 3 cost cap.
 - Secrets/config injection at boot (trust anchor now that nothing persists)
 - Tamper-evident audit log vs agent-written summary (for security monitoring)
 - SSH access control + tmux input-collision when human attaches

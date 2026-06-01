@@ -1,0 +1,43 @@
+{
+  "schema_version": "1",
+  "name": "mini-ledger",
+  "workdir": "..",
+  "phases": [
+    {
+      "id": "phase1-money",
+      "title": "Money parsing",
+      "description": "Implement parse_money() in ledger/money.py: parse '<amount> <CCY>' into Money (Decimal amount from str, 3-uppercase-letter currency); return MoneyError('empty'|'malformed'|'bad-currency').",
+      "proof": "uv run --python 3.13 --with pytest --with hypothesis pytest locked/tests/test_phase1_money.py -q"
+    },
+    {
+      "id": "phase2-posting",
+      "title": "Posting validation",
+      "description": "Implement make_posting() in ledger/posting.py: account non-empty, side debit/credit, amount strictly positive; else PostingError.",
+      "proof": "uv run --python 3.13 --with pytest --with hypothesis pytest locked/tests/test_phase2_posting.py -q"
+    },
+    {
+      "id": "phase3-entry",
+      "title": "Entry validation",
+      "description": "Implement validate_entry() in ledger/entry.py: non-empty, single currency, debits == credits; else EntryError.",
+      "proof": "uv run --python 3.13 --with pytest --with hypothesis pytest locked/tests/test_phase3_entry.py -q"
+    },
+    {
+      "id": "phase4-post",
+      "title": "Posting to balances",
+      "description": "Implement post() in ledger/post.py: fold entries into per-account signed balances (debit +, credit -), sorted by account.",
+      "proof": "uv run --python 3.13 --with pytest --with hypothesis pytest locked/tests/test_phase4_post.py -q"
+    },
+    {
+      "id": "phase5-report",
+      "title": "Trial balance + statement",
+      "description": "Implement is_balanced() and format_statement() in ledger/report.py (deterministic 'account: amount' lines).",
+      "proof": "uv run --python 3.13 --with pytest --with hypothesis pytest locked/tests/test_phase5_report.py -q"
+    },
+    {
+      "id": "phase6-sealed-gate",
+      "title": "Sealed gate",
+      "description": "Authoritative, tamper-resistant: runs the full pipeline out of process over random journals and compares balances to a trusted oracle. Cannot be faked from inside a test process; passing requires the whole pipeline to be correct.",
+      "proof": "uv run --python 3.13 python locked/sealed_check.py"
+    }
+  ]
+}

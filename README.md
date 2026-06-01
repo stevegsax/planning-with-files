@@ -41,9 +41,15 @@ test-planning-with-files/
 │   ├── workspace/                  # agent-owned: AGENT_TASK.md + rpn/ stub
 │   ├── _reference/core.py          # harness-only reference solution (self-test)
 │   └── _attacks/                   # harness-only adversarial fakes (self-test)
+├── examples/ledger/                # 6-phase double-entry ledger (spans sessions)
+│   ├── run-loop.sh                 # multi-session driver
+│   ├── locked/                     # plan.json + sealed_check.py + tests/
+│   ├── workspace/ledger/           # 5 stub modules the agent implements
+│   └── _reference/                 # reference modules (self-test)
 └── tests/
     ├── test_harness.sh             # deterministic gate/tool self-test (no LLM)
     ├── test_orchestrator.sh        # deterministic orchestrator self-test (no LLM)
+    ├── test_ledger.sh              # deterministic ledger self-test (no LLM)
     └── fixtures/
         ├── orchestrator/           # marker-file plan for the orchestrator test
         └── narrate/                # sample transcript for the digest test
@@ -56,6 +62,7 @@ Proves the tools, Stop gate, and orchestrator behave — no API key, no agent.
 ```
 tests/test_harness.sh        # RED/GREEN, sealed anti-fake, infra-vs-RED, escalate, bounded blocks, anti-injection
 tests/test_orchestrator.sh   # multi-session: checkpoints, stall->human, budget cap, .subtype branching
+tests/test_ledger.sh         # 6-phase ledger reference passes every phase incl. the sealed gate
 ```
 
 Requires `bash`, `jq`, `uv`, `git`. The first run downloads `pytest`/`hypothesis`
@@ -87,8 +94,14 @@ sequence of **fresh, bounded sessions** — each sheds its context; continuity l
 on disk (locked plan, derived status, git checkpoints, `HANDOFF.md`).
 
 ```
-examples/toy/run-loop.sh        # same toy, driven across fresh sessions
+examples/toy/run-loop.sh        # the easy RPN toy (usually one session)
+examples/ledger/run-loop.sh     # a 6-phase ledger that reliably spans sessions
 ```
+
+The ledger is the real multi-session demo: it checkpoints each phase, commits it,
+and a fresh session resumes from the committed code + `HANDOFF.md`. Observed runs:
+at `PWFG_TURNS_PER_SESSION=8` it spanned 6 sessions, completed 5/6 phases, then
+correctly escalated; at 16 it completed all 6 across 3 sessions.
 
 Each session ends on either a **checkpoint** (a phase goes green → `subtype:
 success`) or the **turn cap** (`subtype: error_max_turns`); the orchestrator then
@@ -104,8 +117,10 @@ re-author the plan into smaller, independently-gated phases — splitting a phas
 means splitting its proof, which is a governance act, not an autonomous one.
 
 > Each fresh session pays an *orientation tax* (re-reading the handoff/plan/tests)
-> before it can make progress, so set `PWFG_TURNS_PER_SESSION` above that tax or
-> you'll false-stall before the first checkpoint.
+> before it can make progress — and that tax **grows as the codebase grows**, since
+> later sessions re-read more committed code. A fixed turn cap that's fine early can
+> false-stall on a late phase (observed on the ledger at cap 8). Set
+> `PWFG_TURNS_PER_SESSION` above the *late-stage* tax, not just the early one.
 
 The handoff backbone is deterministic. An **optional LLM narrator**
 (`handoff-narrate.sh`, enabled with `PWFG_NARRATE=1`) reads the just-ended
