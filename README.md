@@ -9,8 +9,11 @@ work:
 > march through a multi-phase spec and stop **only** when objective tests are
 > green — while the acceptance suite and the gate stay outside the agent's reach?
 
-The mechanism is proven deterministically by `tests/test_harness.sh`; the live
-agent loop is driven by `examples/toy/run-experiment.sh`.
+That core mechanism is proven deterministically by `tests/test_harness.sh` and
+driven live by `examples/toy/run-experiment.sh`. The skeleton has since grown into
+a fuller autonomy engine — multi-session resume across fresh context windows, a
+self-scaling turn budget, a fact-anchored (optionally LLM-narrated) handoff, and
+off-box escalation notifications — all exercised by three no-LLM self-test suites.
 
 ## Layout
 
@@ -62,7 +65,7 @@ Proves the tools, Stop gate, and orchestrator behave — no API key, no agent.
 
 ```
 tests/test_harness.sh        # RED/GREEN, sealed anti-fake, infra-vs-RED, escalate, bounded blocks, anti-injection
-tests/test_orchestrator.sh   # multi-session: checkpoints, stall->human, budget cap, .subtype branching
+tests/test_orchestrator.sh   # multi-session: checkpoints, scaling budget, stall->human, notifications, .subtype
 tests/test_ledger.sh         # 6-phase ledger reference passes every phase incl. the sealed gate
 ```
 
@@ -100,9 +103,9 @@ examples/ledger/run-loop.sh     # a 6-phase ledger that reliably spans sessions
 ```
 
 The ledger is the real multi-session demo: it checkpoints each phase, commits it,
-and a fresh session resumes from the committed code + `HANDOFF.md`. Observed runs:
-at `PWFG_TURNS_PER_SESSION=8` it spanned 6 sessions, completed 5/6 phases, then
-correctly escalated; at 16 it completed all 6 across 3 sessions.
+and a fresh session resumes from the committed code + `HANDOFF.md`. With the
+default progress-scaling budget (below) it completes all 6 phases across ~3 fresh
+sessions, with no hand-picked turn cap.
 
 Each session ends on either a **checkpoint** (a phase goes green → `subtype:
 success`) or the **turn cap** (`subtype: error_max_turns`); the orchestrator then
@@ -220,7 +223,10 @@ Caveats that remain for P0 (closed in Phase 1):
 | Context hygiene | terse verdict to the model; full output to `.harness/logs/` |
 | Context-bounded long tasks | `run-loop.sh`: fresh sessions, continuity on disk |
 | Resume across fresh sessions | `handoff.sh` (facts) + git checkpoints + derived status |
+| Turn budget scales with progress | `pwfg_session_budget`: proactive + reactive bump |
+| Cut re-orientation | `handoff.sh` "Files for this phase" (EDIT / PROVE WITH / imports) |
 | Too-big phase → human, not auto-split | cross-session stall → `BLOCKED` "re-author the plan" |
+| Off-box escalation alert | `notify.sh` → `PWFG_NOTIFY_CMD` on `HUMAN_NEEDED` |
 
 ## Not in this skeleton (later phases)
 
