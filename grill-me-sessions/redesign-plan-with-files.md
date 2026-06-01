@@ -109,6 +109,21 @@ Build order: P0 brain (local, de-risk the loop+gate first) → P1 security bound
   entirely.
 - v2 escalation: agent must EXPLICITLY emit a BLOCKED marker; otherwise blocked
   is indistinguishable from done-wrong or crashed.
+- FINDING (from P0 skeleton build + adversarial review, 2026-06-01): a deeper
+  hole than "agent edits the tests." A test gate that IMPORTS the agent's code
+  runs that code INSIDE the gate's own process, where it can rewrite the verdict
+  (verified: a core.py that registers a pytest hook flipping every outcome to
+  "passed" → gate reports GREEN with zero implementation). This is NOT closed by
+  the OS-uid boundary (the verifier must import the code to test it) NOR by
+  off-box CI (CI imports it too) — so the earlier "off-box CI = tamper-proof
+  gate" assumption is only partly true. CLOSURE: an OUT-OF-PROCESS differential
+  gate — run the agent's code in a hardened subprocess and compare serialized
+  outputs to a trusted oracle on UNPREDICTABLE inputs, so faking == solving.
+  Implemented + tested in the skeleton (examples/toy/locked/sealed_check.py,
+  phase4-sealed-gate). LIMIT: needs an oracle / held-out inputs; where the spec
+  has none, this degrades and you fall back to the threat model — and note this
+  subversion is a deliberately-adversarial (threat-c) move, out of the agreed
+  scope, so under (a)+(b) it isn't exploited.
 
 ### DECIDED: Pinned dependency set, no runtime registry access
 - **Decision**: Research phase produces a fixed dependency list; cache/pre-bake
@@ -426,7 +441,11 @@ Build order: P0 brain (local, de-risk the loop+gate first) → P1 security bound
 2. **Gate tamper integrity.** Acceptance suite must be immutable to the agent
    EVERYWHERE it's evaluated — OS-RO on-box AND sourced from a protected repo in
    CI. Proof-commands come only from the locked repo (closes the privileged-
-   verify escalation, Trap 1).
+   verify escalation, Trap 1). UPDATE (P0 build): immutability is necessary but
+   NOT sufficient — a gate that imports the agent's code runs it in-process and
+   can be subverted from within, which neither OS-uid nor off-box CI closes. The
+   authoritative gate must run the code OUT OF PROCESS vs a trusted oracle on
+   unpredictable inputs (see Branch 2b FINDING; implemented as the sealed gate).
 3. **IMDS lockdown.** Block agent-uid access to 169.254.169.254 or the instance
    role becomes a backdoor to every secret. Easy to forget.
 4. **Proxy feasibility.** Confirm Claude Code drives cleanly via

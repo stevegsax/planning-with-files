@@ -1,0 +1,9 @@
+# Python / tooling caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Harness run state (created under a run dir; never committed)
+.harness/

@@ -1,0 +1,31 @@
+{
+  "schema_version": "1",
+  "name": "rpn-calculator",
+  "workdir": "..",
+  "phases": [
+    {
+      "id": "phase1-tokenize",
+      "title": "Tokenizer",
+      "description": "Implement tokenize(expression): split on whitespace into Number/Operator tokens. Return ParseError('empty') for blank input and ParseError('malformed-number', token) for any token that is neither an operator nor a valid decimal. (pytest contract; fast feedback)",
+      "proof": "uv run --python 3.13 --with pytest --with hypothesis pytest locked/tests/test_phase1_tokenize.py -q"
+    },
+    {
+      "id": "phase2-evaluate",
+      "title": "Evaluator",
+      "description": "Implement evaluate(tokens): a stack machine for + - * /. Return EvalError('insufficient-operands') on underflow, EvalError('too-many-operands') if more than one value remains, and EvalError('division-by-zero') for division by zero. (pytest contract; fast feedback)",
+      "proof": "uv run --python 3.13 --with pytest --with hypothesis pytest locked/tests/test_phase2_evaluate.py -q"
+    },
+    {
+      "id": "phase3-calc",
+      "title": "Public API",
+      "description": "Implement calc(expression): tokenize then evaluate, propagating ParseError/EvalError. (pytest contract; fast feedback)",
+      "proof": "uv run --python 3.13 --with pytest --with hypothesis pytest locked/tests/test_phase3_calc.py -q"
+    },
+    {
+      "id": "phase4-sealed-gate",
+      "title": "Sealed gate",
+      "description": "Authoritative, tamper-resistant gate: runs calc() out of process against a trusted oracle on unpredictable inputs. The pytest phases above are agent feedback and can be fooled from inside the test process; this phase cannot — passing it requires actually computing calc.",
+      "proof": "uv run --python 3.13 python locked/sealed_check.py"
+    }
+  ]
+}
