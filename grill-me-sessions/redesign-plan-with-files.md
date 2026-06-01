@@ -502,6 +502,23 @@ addressing the DEFERRED supervisor:
   re-exploring) — a static cap is a footgun on long tasks. Also: per-session +
   total cost is now logged from `total_cost_usd` (ledger run ~ $1.18 for 3
   sessions), feeding the Branch 3 cost cap.
+- FORENSICS (transcript analysis of the ledger runs, 2026-06-01): the orientation
+  tax is dominated by re-reading file CONTENTS to rebuild understanding, NOT by
+  finding files (the agent located+opened the same 12-27 line files every
+  session). In the blocked cap-8 run, 4 of 6 sessions wrote ZERO code;
+  orientation:implementation ran ~11:1 (done run) to ~15:1 (blocked). The DECISIVE
+  lever is the turn budget (8 blocked, 16 done), not information. DECISION: add a
+  deterministic "Files for this phase" pointer to the handoff (EDIT module if it
+  exists on disk + PROVE WITH test/proof path + the test's own imports verbatim;
+  derived from plan+proof so it can't go stale or point wrong) + a SOFT read-here-
+  first nudge. REJECTED (adversarial critique): a computed dependency-graph "reuse"
+  line (not correctly derivable from current helpers; self-referential; duplicates
+  the test's imports), a repo TOC, a source map (stubs+locked tests already pin
+  signatures here), and a second DECISIONS prose stream (the narrator already owns
+  the advisory slot). IMPLICATION for the real system: the per-session context/
+  turn bound should SCALE WITH the codebase (the orientation floor rises as more is
+  committed) — a static cap is the footgun, derived pointers are a modest (~1-4
+  calls/session) secondary help, not the fix.
 - Secrets/config injection at boot (trust anchor now that nothing persists)
 - Tamper-evident audit log vs agent-written summary (for security monitoring)
 - SSH access control + tmux input-collision when human attaches

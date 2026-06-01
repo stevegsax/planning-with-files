@@ -122,6 +122,18 @@ means splitting its proof, which is a governance act, not an autonomous one.
 > false-stall on a late phase (observed on the ledger at cap 8). Set
 > `PWFG_TURNS_PER_SESSION` above the *late-stage* tax, not just the early one.
 
+Transcript forensics on real runs showed the tax is dominated by re-reading file
+*contents* to rebuild understanding (in the blocked run, 4 of 6 sessions wrote
+zero code; orientation:implementation ran ~11–15:1) — and that the **turn budget
+is the decisive lever** (8 blocked, 16 completed). As a secondary help, the
+handoff carries a deterministic **"Files for this phase"** block — `EDIT` (the
+module to change, only if it exists on disk), `PROVE WITH` (the test/proof path),
+and the test's own import lines verbatim — derived from the locked plan + proof so
+it can't go stale or point wrong, with a *soft* "start here, read elsewhere only if
+a symbol's missing" nudge. (A repo TOC or source map was rejected for this
+plan-driven repo: the plan already navigates, and stubs + locked tests already pin
+every signature.)
+
 The handoff backbone is deterministic. An **optional LLM narrator**
 (`handoff-narrate.sh`, enabled with `PWFG_NARRATE=1`) reads the just-ended
 session's transcript — located by the exact `session_id` from its `claude -p`

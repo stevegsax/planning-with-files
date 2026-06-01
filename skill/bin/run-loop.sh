@@ -60,6 +60,8 @@ build_prompt() {
   cat <<EOF
 Resuming an autonomous, test-gated task in a FRESH session — your context is
 empty and all memory is on disk. Read HANDOFF.md and the locked plan first.
+HANDOFF.md lists the exact files for this phase under "Files for this phase" —
+start from those; read elsewhere only if a needed symbol isn't there.
 
 Verified GREEN (do not redo): ${green:-none}
 Remaining: ${remaining:-none}
@@ -83,6 +85,8 @@ if [ "$PWFG_GIT_CHECKPOINTS" = 1 ] && [ ! -d "$ws/.git" ]; then
   git -C "$ws" init -q
   git_checkpoint "initial: task workspace"
 fi
+# Seed an initial handoff so even session 1 gets the derived file pointers.
+PWFG_SESSION_N=0 "$DIR/handoff.sh" >/dev/null
 
 session=0; stall=0; total_cost=0
 while :; do
