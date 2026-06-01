@@ -26,9 +26,12 @@ test-planning-with-files/
 │       ├── verify-all.sh           # authoritative gate: run ALL proofs fresh
 │       ├── plan-status.sh          # cached progress view
 │       ├── escalate.sh             # explicit human handoff (BLOCKED marker)
-│       └── stop-gate.sh            # the Stop hook: block until green / escalated
+│       ├── stop-gate.sh            # the Stop hook: block until green / checkpoint
+│       ├── handoff.sh              # regenerate the fact-anchored HANDOFF.md
+│       └── run-loop.sh             # orchestrator: fresh bounded sessions + resume
 ├── examples/toy/                   # the RPN-calculator experiment
-│   ├── run-experiment.sh           # the Phase 0 driver
+│   ├── run-experiment.sh           # single-session driver
+│   ├── run-loop.sh                 # multi-session orchestrated driver
 │   ├── .python-version             # pins the interpreter (3.13)
 │   ├── locked/                     # governance-owned, read-only to the agent
 │   │   ├── plan.json               # 4 phases + proof commands
@@ -37,16 +40,19 @@ test-planning-with-files/
 │   ├── workspace/                  # agent-owned: AGENT_TASK.md + rpn/ stub
 │   ├── _reference/core.py          # harness-only reference solution (self-test)
 │   └── _attacks/                   # harness-only adversarial fakes (self-test)
-└── tests/test_harness.sh           # deterministic self-test (no LLM)
+└── tests/
+    ├── test_harness.sh             # deterministic gate/tool self-test (no LLM)
+    ├── test_orchestrator.sh        # deterministic orchestrator self-test (no LLM)
+    └── fixtures/orchestrator/      # marker-file plan for the orchestrator test
 ```
 
 ## Run the deterministic self-test
 
-Proves the tools and Stop gate behave (RED/GREEN paths, escalate-and-wait,
-bounded blocks, anti-injection, plan validation). No API key, no agent.
+Proves the tools, Stop gate, and orchestrator behave — no API key, no agent.
 
 ```
-tests/test_harness.sh
+tests/test_harness.sh        # RED/GREEN, sealed anti-fake, infra-vs-RED, escalate, bounded blocks, anti-injection
+tests/test_orchestrator.sh   # multi-session: checkpoints, stall->human, budget cap, .subtype branching
 ```
 
 Requires `bash`, `jq`, `uv`, `git`. The first run downloads `pytest`/`hypothesis`
@@ -69,6 +75,37 @@ Optional env: `PWFG_MODEL` (default `sonnet`), `MAX_TURNS` (default `40`),
 reached only by actually implementing the calculator (the sealed gate makes
 faking infeasible). A bounded `RESULT: BLOCKED` (escalation or infra error) or
 `RESULT: RED` (hit `--max-turns`) are the designed safe stops, not crashes.
+
+## Long tasks: bounded sessions + resume
+
+A single `claude -p` run shares one context window, so a long task can exhaust it
+before finishing. The orchestrator (`skill/bin/run-loop.sh`) instead runs a
+sequence of **fresh, bounded sessions** — each sheds its context; continuity lives
+on disk (locked plan, derived status, git checkpoints, `HANDOFF.md`).
+
+```
+examples/toy/run-loop.sh        # same toy, driven across fresh sessions
+```
+
+Each session ends on either a **checkpoint** (a phase goes green → `subtype:
+success`) or the **turn cap** (`subtype: error_max_turns`); the orchestrator then
+runs `verify-all`, commits any newly-green phase as a checkpoint, regenerates a
+bounded fact-anchored `HANDOFF.md`, and launches a fresh session that resumes from
+disk. It stops on: gate green (done), agent 3-strike escalation, a cross-session
+**stall** (no new green in N sessions → human), an **infra error**, or a **session
+budget** cap.
+
+It **never edits the locked plan.** A phase too big for one window surfaces as a
+stall and escalates to a human to either raise `PWFG_TURNS_PER_SESSION` or
+re-author the plan into smaller, independently-gated phases — splitting a phase
+means splitting its proof, which is a governance act, not an autonomous one.
+
+> Each fresh session pays an *orientation tax* (re-reading the handoff/plan/tests)
+> before it can make progress, so set `PWFG_TURNS_PER_SESSION` above that tax or
+> you'll false-stall before the first checkpoint.
+
+Knobs: `PWFG_TURNS_PER_SESSION` (default 12), `PWFG_MAX_SESSIONS` (10),
+`PWFG_STALL_LIMIT` (2), `PWFG_STOP_AT_CHECKPOINT` (1), `PWFG_GIT_CHECKPOINTS` (1).
 
 ## What the gate does and does not guarantee (P0)
 
@@ -106,6 +143,9 @@ Caveats that remain for P0 (closed in Phase 1):
 | Infra error ≠ test failure | `verify-all` exit 2 → `stop-gate` escalates, doesn't loop |
 | Bounded runaway (fails safe) | `PWFG_MAX_BLOCKS` + run `--max-turns` |
 | Context hygiene | terse verdict to the model; full output to `.harness/logs/` |
+| Context-bounded long tasks | `run-loop.sh`: fresh sessions, continuity on disk |
+| Resume across fresh sessions | `handoff.sh` (facts) + git checkpoints + derived status |
+| Too-big phase → human, not auto-split | cross-session stall → `BLOCKED` "re-author the plan" |
 
 ## Not in this skeleton (later phases)
 

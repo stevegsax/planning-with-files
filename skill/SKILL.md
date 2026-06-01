@@ -76,3 +76,19 @@ workspace; it makes proofs pass, it never edits them.
   escalates immediately instead of telling the agent to fix correct code.
 - Proof commands are read **only** from the locked plan, so a privileged verifier
   never executes agent-authored command strings.
+
+## Long tasks: bounded sessions + resume
+
+A single session shares one context window. For tasks too large for one window,
+the orchestrator (`run-loop.sh`) runs a sequence of **fresh, bounded sessions** —
+context is shed each session; continuity lives on disk (locked plan, derived
+status, git checkpoints, `HANDOFF.md`). It reads each session's `claude -p
+--output-format json` `.subtype` (`success` = checkpoint/clean stop;
+`error_max_turns` = hit the cap mid-phase), commits newly-green phases, and
+regenerates a bounded, fact-anchored handoff for the next session.
+
+A phase too big to finish in one window surfaces as a **cross-session stall** and
+escalates to a human — it never auto-splits a phase, because splitting a phase
+means splitting its proof, which is a governance act. Note the per-session
+**orientation tax**: a fresh agent must re-read the handoff/plan/tests before it
+can make progress, so the turn cap must exceed that tax.

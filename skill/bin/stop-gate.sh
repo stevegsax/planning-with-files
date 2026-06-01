@@ -50,6 +50,17 @@ case "$gate_rc" in
     ;;
 esac
 
+# Checkpoint mode (used by the orchestrator): if a NEW phase has gone green since
+# the session baseline, allow the session to stop here so the orchestrator can
+# restart with a fresh context window. verify-all just refreshed the cache.
+if [ "${PWFG_STOP_AT_CHECKPOINT:-0}" = 1 ] && [ -f "$sd/session_baseline.json" ]; then
+  base="$(jq -r '.[]?' "$sd/session_baseline.json" 2>/dev/null | sort)"
+  cur="$(pwfg_green_ids | sort)"
+  if [ -n "$(comm -13 <(printf '%s\n' "$base") <(printf '%s\n' "$cur") | sed '/^$/d')" ]; then
+    exit 0   # a checkpoint was reached -> allow stop
+  fi
+fi
+
 # RED — bounded-block guard that FAILS SAFE on garbage.
 loop="$sd/loop.json"
 jq -e . "$loop" >/dev/null 2>&1 || printf '{"blocks":0}\n' >"$loop"

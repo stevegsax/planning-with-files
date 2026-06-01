@@ -126,3 +126,16 @@ pwfg_failing_ids() {
   jq -r '[.phases | to_entries[] | select(.value.result != "pass") | .key] | join(", ")' \
     "$(pwfg_status_file)" 2>/dev/null
 }
+
+# Phase ids whose cached result is pass (one per line).
+pwfg_green_ids() {
+  jq -r '[.phases | to_entries[] | select(.value.result == "pass") | .key][]' \
+    "$(pwfg_status_file)" 2>/dev/null
+}
+
+# Remaining (not-green) phase ids, in plan order (one per line).
+pwfg_remaining_ids() {
+  local green; green="$(pwfg_green_ids)"
+  if [ -z "$green" ]; then pwfg_phase_ids; return; fi
+  pwfg_phase_ids | grep -vxF -f <(printf '%s\n' "$green")
+}

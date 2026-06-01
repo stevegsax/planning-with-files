@@ -1,0 +1,10 @@
+{
+  "schema_version": "1",
+  "name": "orch-test",
+  "workdir": ".",
+  "phases": [
+    {"id": "step1", "title": "Step 1", "proof": "test -f \"$PWFG_WORKSPACE/step1.done\""},
+    {"id": "step2", "title": "Step 2", "proof": "test -f \"$PWFG_WORKSPACE/step2.done\""},
+    {"id": "step3", "title": "Step 3", "proof": "test -f \"$PWFG_WORKSPACE/step3.done\""}
+  ]
+}

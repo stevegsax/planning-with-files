@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# run-loop.sh — drive the toy across MULTIPLE fresh sessions via the orchestrator.
+#
+# Same gated toy as run-experiment.sh, but each session is context-bounded and the
+# orchestrator restarts fresh ones until green / stall / budget. The toy is small
+# enough to finish in one session, so this mainly demonstrates orchestrator<->agent
+# composition; the multi-session LOGIC (checkpoints, stall->human, budget) is proven
+# deterministically in tests/test_orchestrator.sh.
+#
+# NOTE: each fresh session pays an orientation tax (re-reading the handoff/plan/
+# tests) before it can make progress, so a too-low turn cap will false-stall before
+# the first checkpoint. The default below clears that tax for this toy.
+#
+# Usage:  examples/toy/run-loop.sh
+# Env:    ANTHROPIC_API_KEY (required)   PWFG_MODEL (default: sonnet)
+#         PWFG_TURNS_PER_SESSION (default: 12)  PWFG_MAX_SESSIONS (default: 8)
+#         PWFG_STALL_LIMIT (default: 2)
+
+set -uo pipefail
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SKILL="$REPO/skill"
+TOY="$REPO/examples/toy"
+
+for t in claude uv jq git; do
+  command -v "$t" >/dev/null 2>&1 || { echo "missing required tool: $t" >&2; exit 1; }
+done
+if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  echo "warning: no ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN set; headless auth may fail." >&2
+fi
+
+RUN_BASE="$(mktemp -d "${TMPDIR:-/tmp}/pwfg-loop.XXXXXX")"
+RUN_DIR="$RUN_BASE/workspace"
+mkdir -p "$RUN_DIR"
+cp -R "$TOY/workspace/." "$RUN_DIR/"
+rm -rf "$RUN_DIR/.harness"
+
+mkdir -p "$RUN_DIR/.claude"
+jq -n --arg cmd "$SKILL/bin/stop-gate.sh" '{
+  hooks: { Stop: [ { hooks: [ { type: "command", command: $cmd } ] } ] }
+}' >"$RUN_DIR/.claude/settings.json"
+
+export PWFG_PLAN="$TOY/locked/plan.json"
+export PWFG_SCHEMA="$SKILL/schema/plan.schema.json"
+export PWFG_WORKSPACE="$RUN_DIR"
+export PWFG_STATE_DIR="$RUN_BASE/state"
+export PWFG_STOP_AT_CHECKPOINT=1
+export PWFG_TURNS_PER_SESSION="${PWFG_TURNS_PER_SESSION:-12}"
+export PWFG_MAX_SESSIONS="${PWFG_MAX_SESSIONS:-8}"
+export PWFG_STALL_LIMIT="${PWFG_STALL_LIMIT:-2}"
+export PWFG_MODEL="${PWFG_MODEL:-sonnet}"
+
+echo "== orchestrated run: turns/session=${PWFG_TURNS_PER_SESSION}, max-sessions=${PWFG_MAX_SESSIONS} =="
+"$SKILL/bin/run-loop.sh"
+
+echo
+echo "Run base: $RUN_BASE  (workspace/ + state/)"
+echo "Checkpoints:"; git -C "$RUN_DIR" log --oneline 2>/dev/null | awk '{print "  " $0}'
+echo "Handoff:  $RUN_DIR/HANDOFF.md"

@@ -466,6 +466,31 @@ Build order: P0 brain (local, de-risk the loop+gate first) → P1 security bound
   proxy is the enforcement point for a hard token/$ ceiling + kill switch + audit
   — the only place a cap can be enforced (agent can't be trusted to cap itself).
   Remaining: idle-VM cost (ties to manual teardown).
+
+## Post-build addition: context-bounded multi-session orchestrator (2026-06-01)
+
+Built in the P0 skeleton (skill/bin/run-loop.sh + handoff.sh), partially
+addressing the DEFERRED supervisor:
+- PROBLEM: one `claude -p` session = one context window; long tasks exhaust it.
+  The Stop-hook loop keeps ONE session alive, which makes context pressure worse.
+- FIX: an outer loop of FRESH bounded sessions; continuity on disk (locked plan,
+  derived status, git checkpoints, HANDOFF.md). NOT `--continue`/`--resume`
+  (those reuse the prior context — the opposite of what we want).
+- Per-session end read from `claude -p --output-format json` `.subtype` (verified
+  on 2.1.159: `success` vs `error_max_turns` vs `error_during_execution`; process
+  exit 0 vs non-zero is coarser, so branch on `.subtype`).
+- Decision table: green→done; agent 3-strike→human; cross-session stall (no new
+  green in N sessions)→human; infra→human; session budget→human.
+- IMMUTABLE-PLAN UPHELD: a too-big phase escalates to a human to raise the turn
+  cap OR re-author the plan into finer phases. The loop never edits the plan
+  (splitting a phase = splitting its proof = a governance act).
+- HANDOFF = deterministic ground-truth facts (gate/status/git) + advisory agent
+  notes; rewritten (not appended) each session so it stays bounded.
+- FINDING (live run): each fresh session pays an ORIENTATION TAX (re-reading the
+  handoff/plan/tests) before progress. A turn cap below that tax false-stalls
+  before the first checkpoint — the stall message names both causes (cap too low
+  vs phase too big). Live: drove the toy to a tamper-verified green gate across 2
+  fresh sessions (session 2 resumed from session 1's on-disk state).
 - Secrets/config injection at boot (trust anchor now that nothing persists)
 - Tamper-evident audit log vs agent-written summary (for security monitoring)
 - SSH access control + tmux input-collision when human attaches
