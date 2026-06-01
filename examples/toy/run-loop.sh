@@ -48,8 +48,10 @@ export PWFG_TURNS_PER_SESSION="${PWFG_TURNS_PER_SESSION:-12}"
 export PWFG_MAX_SESSIONS="${PWFG_MAX_SESSIONS:-8}"
 export PWFG_STALL_LIMIT="${PWFG_STALL_LIMIT:-2}"
 export PWFG_MODEL="${PWFG_MODEL:-sonnet}"
+export PWFG_NARRATE="${PWFG_NARRATE:-0}"            # 1 = LLM handoff narrator
+export PWFG_NARRATE_MODEL="${PWFG_NARRATE_MODEL:-haiku}"
 
-echo "== orchestrated run: turns/session=${PWFG_TURNS_PER_SESSION}, max-sessions=${PWFG_MAX_SESSIONS} =="
+echo "== orchestrated run: turns/session=${PWFG_TURNS_PER_SESSION}, max-sessions=${PWFG_MAX_SESSIONS}, narrate=${PWFG_NARRATE} =="
 "$SKILL/bin/run-loop.sh"
 
 echo

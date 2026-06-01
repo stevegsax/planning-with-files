@@ -92,3 +92,9 @@ escalates to a human — it never auto-splits a phase, because splitting a phase
 means splitting its proof, which is a governance act. Note the per-session
 **orientation tax**: a fresh agent must re-read the handoff/plan/tests before it
 can make progress, so the turn cap must exceed that tax.
+
+The handoff backbone is deterministic; an optional LLM narrator
+(`handoff-narrate.sh`, `PWFG_NARRATE=1`) reads the ended session's transcript and
+appends a brief *advisory* note — most useful after `error_max_turns`, when the
+dev agent had no turn to leave its own. Advisory only; the gate stays the
+authority.

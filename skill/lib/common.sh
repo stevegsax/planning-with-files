@@ -139,3 +139,19 @@ pwfg_remaining_ids() {
   if [ -z "$green" ]; then pwfg_phase_ids; return; fi
   pwfg_phase_ids | grep -vxF -f <(printf '%s\n' "$green")
 }
+
+# Locate a session's transcript jsonl by session id (portable; no fd dependency).
+pwfg_find_transcript() {
+  local cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  [ -d "$cfg/projects" ] || return 0
+  find "$cfg/projects" -type f -name "$1.jsonl" 2>/dev/null | head -1
+}
+
+# Bounded text digest of a transcript jsonl: assistant prose + tool calls (names
+# + short input), most-recent ~6 KB. Feeds the optional LLM handoff narrator.
+pwfg_transcript_digest() {
+  jq -rc 'select(.type == "assistant") | .message.content[]? |
+    if .type == "text" then ("ASSISTANT: " + (.text // ""))
+    elif .type == "tool_use" then ("TOOL " + (.name // "?") + ": " + (((.input // {}) | tostring)[0:200]))
+    else empty end' "$1" 2>/dev/null | tail -c 6000
+}

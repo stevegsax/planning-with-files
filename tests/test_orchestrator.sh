@@ -95,6 +95,16 @@ orch_run sessionerror
 assert_ok  "RESULT is HUMAN NEEDED" "printf '%s' \"\$ORCH_OUT\" | grep -q 'RESULT: HUMAN NEEDED'"
 assert_ok  "BLOCKED cites the error subtype" "grep -q 'error_during_execution' \"$PWFG_STATE_DIR/BLOCKED\""
 
+echo "== handoff narrator: transcript digest (deterministic part) =="
+# shellcheck disable=SC1091
+. "$SKILL/lib/common.sh"
+DG="$(pwfg_transcript_digest "$REPO/tests/fixtures/narrate/transcript.jsonl")"
+assert_ok  "digest includes assistant prose" "printf '%s' \"\$DG\" | grep -q 'ASSISTANT: I will implement tokenize first'"
+assert_ok  "digest includes tool calls with name + input" "printf '%s' \"\$DG\" | grep -q 'TOOL Write:.*rpn/core.py'"
+assert_ok  "digest keeps the latest assistant note" "printf '%s' \"\$DG\" | grep -q 'malformed-number'"
+assert_no  "digest excludes user/tool_result noise" "printf '%s' \"\$DG\" | grep -q tool_result"
+assert_no  "narrator no-ops when disabled (PWFG_NARRATE unset)" "PWFG_NARRATE=0 \"$SKILL/bin/handoff-narrate.sh\" some-id | grep -q ."
+
 echo
 printf '== %d passed, %d failed ==\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -28,6 +28,7 @@ test-planning-with-files/
 │       ├── escalate.sh             # explicit human handoff (BLOCKED marker)
 │       ├── stop-gate.sh            # the Stop hook: block until green / checkpoint
 │       ├── handoff.sh              # regenerate the fact-anchored HANDOFF.md
+│       ├── handoff-narrate.sh      # optional LLM narrator (reads the transcript)
 │       └── run-loop.sh             # orchestrator: fresh bounded sessions + resume
 ├── examples/toy/                   # the RPN-calculator experiment
 │   ├── run-experiment.sh           # single-session driver
@@ -43,7 +44,9 @@ test-planning-with-files/
 └── tests/
     ├── test_harness.sh             # deterministic gate/tool self-test (no LLM)
     ├── test_orchestrator.sh        # deterministic orchestrator self-test (no LLM)
-    └── fixtures/orchestrator/      # marker-file plan for the orchestrator test
+    └── fixtures/
+        ├── orchestrator/           # marker-file plan for the orchestrator test
+        └── narrate/                # sample transcript for the digest test
 ```
 
 ## Run the deterministic self-test
@@ -104,8 +107,19 @@ means splitting its proof, which is a governance act, not an autonomous one.
 > before it can make progress, so set `PWFG_TURNS_PER_SESSION` above that tax or
 > you'll false-stall before the first checkpoint.
 
+The handoff backbone is deterministic. An **optional LLM narrator**
+(`handoff-narrate.sh`, enabled with `PWFG_NARRATE=1`) reads the just-ended
+session's transcript — located by the exact `session_id` from its `claude -p`
+json — digests it, and appends a brief *advisory* "what was tried / next step"
+note (via a cheap `haiku` call). It matters most after `error_max_turns`, when the
+dev agent got no turn to leave notes. Advisory only: the gate stays authoritative,
+so a wrong narrative can't fake progress; it no-ops cleanly when disabled or when
+no transcript is found. The orchestrator also logs per-session and total
+`total_cost_usd` from the json.
+
 Knobs: `PWFG_TURNS_PER_SESSION` (default 12), `PWFG_MAX_SESSIONS` (10),
-`PWFG_STALL_LIMIT` (2), `PWFG_STOP_AT_CHECKPOINT` (1), `PWFG_GIT_CHECKPOINTS` (1).
+`PWFG_STALL_LIMIT` (2), `PWFG_STOP_AT_CHECKPOINT` (1), `PWFG_GIT_CHECKPOINTS` (1),
+`PWFG_NARRATE` (0), `PWFG_NARRATE_MODEL` (haiku).
 
 ## What the gate does and does not guarantee (P0)
 

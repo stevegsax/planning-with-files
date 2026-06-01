@@ -84,7 +84,7 @@ if [ "$PWFG_GIT_CHECKPOINTS" = 1 ] && [ ! -d "$ws/.git" ]; then
   git_checkpoint "initial: task workspace"
 fi
 
-session=0; stall=0
+session=0; stall=0; total_cost=0
 while :; do
   session=$((session + 1))
   if [ "$session" -gt "$PWFG_MAX_SESSIONS" ]; then
@@ -99,7 +99,10 @@ while :; do
   log "session $session start (green: $(printf '%s' "$before_green" | paste -sd',' -))"
   session_json="$(launch "$(build_prompt)" 2>/dev/null || true)"
   subtype="$(printf '%s' "$session_json" | jq -r '.subtype // "unknown"' 2>/dev/null || echo unknown)"
-  log "session $session end: subtype=$subtype"
+  sid="$(printf '%s' "$session_json" | jq -r '.session_id // empty' 2>/dev/null || true)"
+  cost="$(printf '%s' "$session_json" | jq -r '.total_cost_usd // 0' 2>/dev/null || echo 0)"
+  total_cost="$(awk "BEGIN{printf \"%.4f\", ${total_cost:-0} + ${cost:-0}}" 2>/dev/null || echo "$total_cost")"
+  log "session $session end: subtype=$subtype  cost=\$${cost}  (total \$${total_cost})"
 
   "$DIR/verify-all.sh" >"$sd/logs/_gate.txt" 2>&1; gate_rc=$?
   after_green="$(pwfg_green_ids | sort)"
@@ -142,6 +145,7 @@ while :; do
   fi
 
   PWFG_LAST_SUBTYPE="$subtype" PWFG_SESSION_N="$session" "$DIR/handoff.sh" >/dev/null
+  PWFG_SESSION_ID="$sid" "$DIR/handoff-narrate.sh" || true
 done
 
 # --- final report ---
@@ -153,4 +157,5 @@ elif [ -f "$sd/BLOCKED" ]; then
 else
   echo "RESULT: INCOMPLETE (sessions=$session)."
 fi
+printf 'Total session cost: $%s\n' "$total_cost"
 "$DIR/plan-status.sh" 2>/dev/null || true
