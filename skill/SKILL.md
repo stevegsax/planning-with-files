@@ -102,6 +102,11 @@ can't finish a phase). As a *secondary* lever, the handoff carries a determinist
 `PROVE WITH` (the test/proof path), and the test's own import lines verbatim —
 derived from the locked plan + proof, so it can't go stale or point wrong.
 
+When a run ends, `notify.sh` records the outcome and — on **escalation** by
+default — invokes a user-provided `PWFG_NOTIFY_CMD` (ntfy / webhook / Slack / ...)
+so the human gets pinged off the box; `PWFG_NOTIFY_ON=all` also notifies on
+completion.
+
 The handoff backbone is deterministic; an optional LLM narrator
 (`handoff-narrate.sh`, `PWFG_NARRATE=1`) reads the ended session's transcript and
 appends a brief *advisory* note — most useful after `error_max_turns`, when the

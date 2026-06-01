@@ -29,6 +29,7 @@ test-planning-with-files/
 │       ├── stop-gate.sh            # the Stop hook: block until green / checkpoint
 │       ├── handoff.sh              # regenerate the fact-anchored HANDOFF.md
 │       ├── handoff-narrate.sh      # optional LLM narrator (reads the transcript)
+│       ├── notify.sh               # run-outcome notification (escalation channel)
 │       └── run-loop.sh             # orchestrator: fresh bounded sessions + resume
 ├── examples/toy/                   # the RPN-calculator experiment
 │   ├── run-experiment.sh           # single-session driver
@@ -156,10 +157,30 @@ so a wrong narrative can't fake progress; it no-ops cleanly when disabled or whe
 no transcript is found. The orchestrator also logs per-session and total
 `total_cost_usd` from the json.
 
+**Notifications.** When a run ends, `notify.sh` records the outcome to a durable
+local log (`$XDG_STATE_HOME/pwfg/notifications.log`) and — on **escalation**
+(`HUMAN_NEEDED`) by default — invokes a user-provided channel so the ping reaches
+you *off the box*. Set `PWFG_NOTIFY_CMD` to any command; it receives the outcome
+via env (`PWFG_NOTIFY_STATUS`/`_PLAN`/`_PHASE`/`_RUNDIR`/`_TITLE`) and a formatted
+message on stdin. Examples:
+
+```
+# ntfy.sh
+export PWFG_NOTIFY_CMD='curl -s -H "Title: $PWFG_NOTIFY_TITLE" -d "$(cat)" ntfy.sh/my-topic'
+# Slack/Discord incoming webhook
+export PWFG_NOTIFY_CMD='curl -s -X POST -H "Content-type: application/json" \
+  --data "{\"text\": $(cat | jq -Rs .)}" "$SLACK_WEBHOOK_URL"'
+```
+
+Set `PWFG_NOTIFY_ON=all` to also notify on `GREEN` completion. The agent's own
+3-strike `escalate.sh`, a cross-session stall, infra errors, and the session-budget
+cap all surface as `HUMAN_NEEDED` and trigger the channel.
+
 Knobs: turn budget `PWFG_TURNS_{BASE,PER_PHASE,MAX,BUMP}` (12/3/24/4, or
 `PWFG_TURNS_PER_SESSION` to fix it), `PWFG_MAX_SESSIONS` (10), `PWFG_STALL_LIMIT`
 (2), `PWFG_STOP_AT_CHECKPOINT` (1), `PWFG_GIT_CHECKPOINTS` (1), `PWFG_NARRATE` (0),
-`PWFG_NARRATE_MODEL` (haiku).
+`PWFG_NARRATE_MODEL` (haiku), `PWFG_NOTIFY_CMD` (unset), `PWFG_NOTIFY_ON`
+(escalate).
 
 ## What the gate does and does not guarantee (P0)
 

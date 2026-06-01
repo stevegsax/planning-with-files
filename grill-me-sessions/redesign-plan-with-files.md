@@ -455,8 +455,12 @@ Build order: P0 brain (local, de-risk the loop+gate first) → P1 security bound
 ## Consciously Deferred (not gaps — known choices)
 
 - Teardown automation (manual for v1; idle-VM cost accepted short-term).
-- v2 supervisor + notifications (auto recovery for wedged/crashed/escalated
-  states; v1 is human-in-loop via SSM).
+- v2 supervisor + notifications: NOTIFICATIONS now BUILT (skill/bin/notify.sh) —
+  the orchestrator records every run outcome to a durable local log and invokes a
+  user-provided PWFG_NOTIFY_CMD (ntfy/webhook/Slack/SNS) on escalation
+  (HUMAN_NEEDED) by default, so the human is pinged off-box; PWFG_NOTIFY_ON=all
+  also notifies on completion. Auto-RECOVERY of wedged/crashed states still
+  deferred (the loop escalates to a human; it does not self-heal the agent).
 - Dynamic task-pulling (queue/poll); v1 is one-box-one-task-at-launch.
 - NixOS reproducibility (v1.5); Tailscale access (maybe later).
 - Quality residual: agent can "teach to the literal test"; mitigate with

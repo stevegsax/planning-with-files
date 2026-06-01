@@ -168,10 +168,14 @@ done
 echo
 if "$DIR/verify-all.sh" >/dev/null 2>&1; then
   echo "RESULT: GREEN — completed in $session session(s)."
+  result_status=GREEN
 elif [ -f "$sd/BLOCKED" ]; then
   echo "RESULT: HUMAN NEEDED —"; awk '{print "  " $0}' "$sd/BLOCKED"
+  result_status=HUMAN_NEEDED
 else
   echo "RESULT: INCOMPLETE (sessions=$session)."
+  result_status=INCOMPLETE
 fi
 printf 'Total session cost: $%s\n' "$total_cost"
+"$DIR/notify.sh" "$result_status" || true
 "$DIR/plan-status.sh" 2>/dev/null || true

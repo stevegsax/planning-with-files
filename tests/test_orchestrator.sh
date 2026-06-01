@@ -45,6 +45,12 @@ cat >"$BIN/sessionerror" <<'EOF'
 #!/usr/bin/env bash
 printf '{"subtype":"error_during_execution"}\n'
 EOF
+cat >"$BIN/notify_sink" <<'EOF'
+#!/usr/bin/env bash
+{ echo "STATUS=$PWFG_NOTIFY_STATUS"; echo "TITLE=$PWFG_NOTIFY_TITLE"
+  echo "PHASE=$PWFG_NOTIFY_PHASE"; echo "RUNDIR=$PWFG_NOTIFY_RUNDIR"
+  echo "--- message ---"; cat; } >>"$PWFG_NOTIFY_SINK"
+EOF
 chmod +x "$BIN"/*
 
 ORCH_OUT=""
@@ -123,6 +129,38 @@ assert_ok  "reactive bump raises the budget (16t)" "printf '%s' \"\$ORCH_OUT\" |
 assert_ok  "budget climbs to the max (24t)" "printf '%s' \"\$ORCH_OUT\" | grep -q 'budget 24t'"
 assert_ok  "escalates once max budget can't finish" "printf '%s' \"\$ORCH_OUT\" | grep -q 'RESULT: HUMAN NEEDED'"
 assert_ok  "BLOCKED cites too-big-even-at-max" "grep -qi 'too large' \"$PWFG_STATE_DIR/BLOCKED\""
+
+echo "== escalation notification: channel + local log + escalate-only filter =="
+nb="$(mktemp -d)"
+export PWFG_PLAN="$FIXTURE"; unset PWFG_SCHEMA
+export PWFG_WORKSPACE="$nb/ws"; export PWFG_STATE_DIR="$nb/state"; mkdir -p "$PWFG_WORKSPACE"
+export XDG_STATE_HOME="$nb/xdg"
+"$SKILL/bin/init-session.sh" >/dev/null
+printf 'reason: test stall — phase too big\n' > "$PWFG_STATE_DIR/BLOCKED"
+export PWFG_NOTIFY_SINK="$nb/sink.txt"; : > "$PWFG_NOTIFY_SINK"
+export PWFG_NOTIFY_CMD="$BIN/notify_sink"
+"$SKILL/bin/notify.sh" HUMAN_NEEDED >/dev/null
+assert_ok  "channel invoked on HUMAN_NEEDED" "[ -s \"$PWFG_NOTIFY_SINK\" ]"
+assert_ok  "channel receives the status" "grep -q 'STATUS=HUMAN_NEEDED' \"$PWFG_NOTIFY_SINK\""
+assert_ok  "channel receives the title" "grep -qF 'TITLE=[pwfg] orch-test: HUMAN_NEEDED' \"$PWFG_NOTIFY_SINK\""
+assert_ok  "message carries the escalation reason" "grep -q 'phase too big' \"$PWFG_NOTIFY_SINK\""
+assert_ok  "recorded to the durable local log" "grep -q HUMAN_NEEDED \"$XDG_STATE_HOME/pwfg/notifications.log\""
+: > "$PWFG_NOTIFY_SINK"; rm -f "$PWFG_STATE_DIR/BLOCKED"
+"$SKILL/bin/notify.sh" GREEN >/dev/null
+assert_no  "GREEN does not invoke the channel by default" "[ -s \"$PWFG_NOTIFY_SINK\" ]"
+PWFG_NOTIFY_ON=all "$SKILL/bin/notify.sh" GREEN >/dev/null
+assert_ok  "GREEN invokes the channel when PWFG_NOTIFY_ON=all" "[ -s \"$PWFG_NOTIFY_SINK\" ]"
+
+echo "== orchestrator fires the notification on escalation, not on success =="
+isink="$(mktemp)"; export PWFG_NOTIFY_SINK="$isink"; export PWFG_NOTIFY_CMD="$BIN/notify_sink"
+export XDG_STATE_HOME="$(mktemp -d)"; unset PWFG_NOTIFY_ON
+export PWFG_MAX_SESSIONS=5 PWFG_STALL_LIMIT=2
+orch_run noprogress
+assert_ok  "escalation run fired the channel" "grep -q 'STATUS=HUMAN_NEEDED' \"$isink\""
+: > "$isink"
+orch_run progress
+assert_no  "completed run does not fire the channel by default" "grep -q 'STATUS=' \"$isink\""
+unset PWFG_NOTIFY_CMD PWFG_NOTIFY_SINK XDG_STATE_HOME
 
 echo "== handoff narrator: transcript digest (deterministic part) =="
 # shellcheck disable=SC1091
