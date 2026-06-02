@@ -59,6 +59,16 @@ useradd -M -s /usr/sbin/nologin -G "$G1","$G2" "$GV"
 useradd -M -s /usr/sbin/nologin -G "$G2" "$PX"
 made_users=1
 
+# A gov/agent-traversable home for the skill + tree. The repo checkout may sit under
+# a dir the throwaway users cannot traverse (e.g. /home/runner in CI, or any $HOME),
+# so copy the skill into the world-traversable /tmp tree and run it from there —
+# mirroring the real box, where the skill lives gov-owned under /srv/pwfg (not a
+# user's home). Boot scripts ($BOOT) are only ever run as root, so they stay in-repo.
+SRV="$(mktemp -d -p /tmp pwfgbnd.XXXXXX)"; chmod 0755 "$SRV"
+mkdir -p "$SRV/skill"; cp -a "$SKILL/." "$SRV/skill/"
+chown -R "$GV:$G1" "$SRV/skill"; chmod -R u+rwX,go+rX "$SRV/skill"
+RUNSKILL="$SRV/skill"
+
 # gov needs to spawn the agent and the agent needs the narrow verify bridge; mirror
 # infra/bootstrap/sudoers.d/pwfg with the test identities + paths.
 SUDOERS="/etc/sudoers.d/pwfg-boundary-test"
@@ -66,16 +76,14 @@ cat >"$SUDOERS" <<EOF
 Defaults:$GV env_keep += "PWFG_PROMPT PWFG_WORKSPACE PWFG_ENV_FILE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2"
 Defaults:$AG env_keep += "PWFG_ENV_FILE PWFG_PROOF_AS GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2"
 $GV ALL=($AG) NOPASSWD: ALL
-$AG ALL=($GV) NOPASSWD: $SKILL/bin/verify-all.sh, $SKILL/bin/verify-task.sh, $SKILL/bin/escalate.sh
+$AG ALL=($GV) NOPASSWD: $RUNSKILL/bin/verify-all.sh, $RUNSKILL/bin/verify-task.sh, $RUNSKILL/bin/escalate.sh
 EOF
 chmod 0440 "$SUDOERS"
 visudo -cf "$SUDOERS" >/dev/null 2>&1 || { no "sudoers fragment is valid"; }
 
-# --- lay out /srv/pwfg with the target ownership/perms ---
-# Use /tmp (1777, world-traversable) NOT $TMPDIR (often 0700) so the agent uid can
-# traverse to the tree — otherwise the negative checks would pass for the wrong
-# reason (no traversal) instead of the right one (ownership/perms).
-SRV="$(mktemp -d -p /tmp pwfgbnd.XXXXXX)"; chmod 0755 "$SRV"
+# --- lay out the rest of the /srv/pwfg-style tree under $SRV (created above, in /tmp
+# so the agent uid can traverse it: a 0700 $TMPDIR would let the negative checks pass
+# for the WRONG reason — no traversal — instead of the right one, ownership/perms). ---
 mkdir -p "$SRV"/{locked,state,gov,proxy,control,workspace}
 mkdir -p "$SRV/locked/tests"
 
@@ -94,7 +102,7 @@ chown "$GV:$GV" "$SRV/state"; chmod 0700 "$SRV/state"
 
 # gov/  gov:G1 0750; settings.json + env 0640 -> agent reads, cannot write
 cat >"$SRV/gov/settings.json" <<EOF
-{ "hooks": { "Stop": [ { "hooks": [ { "type": "command", "command": "sudo -u $GV $SKILL/bin/stop-gate.sh" } ] } ] } }
+{ "hooks": { "Stop": [ { "hooks": [ { "type": "command", "command": "sudo -u $GV $RUNSKILL/bin/stop-gate.sh" } ] } ] } }
 EOF
 cat >"$SRV/gov/env" <<EOF
 export PWFG_PLAN="$SRV/locked/plan.json"
@@ -179,7 +187,7 @@ sudo -u "$GV" env $GI \
   PWFG_PROOF_AS="$AG" \
   PWFG_STOP_AT_CHECKPOINT=1 PWFG_MAX_SESSIONS=5 PWFG_STALL_LIMIT=2 \
   PWFG_LAUNCH_CMD="$LAUNCHER" \
-  bash "$SKILL/bin/run-loop.sh" >"$SRV/loop.out" 2>&1
+  bash "$RUNSKILL/bin/run-loop.sh" >"$SRV/loop.out" 2>&1
 loop_rc=$?
 
 assert_grep() { if grep -q "$2" "$3" 2>/dev/null; then ok "$1"; else no "$1"; printf '       (see %s)\n' "$3"; fi; }
@@ -198,7 +206,7 @@ echo "== agent -> gov verify bridge (narrow sudoers + env-file) =="
 # command must be verify-all.sh itself — the sudoers rule permits nothing else.
 allow "agent can run verify-all only via the gov bridge, sees GREEN" \
       sudo -u "$AG" env PWFG_ENV_FILE="$SRV/gov/env" PWFG_PROOF_AS="$AG" $GI \
-        sudo -u "$GV" "$SKILL/bin/verify-all.sh"
+        sudo -u "$GV" "$RUNSKILL/bin/verify-all.sh"
 
 echo
 echo "== $PASS passed, $FAIL failed =="
