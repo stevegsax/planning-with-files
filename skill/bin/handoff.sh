@@ -5,7 +5,8 @@
 # the agent's own progress notes are included as ADVISORY only. Rewritten (not
 # appended) each session so it never grows into the context problem it solves.
 #
-# Context from the orchestrator (optional): PWFG_LAST_SUBTYPE, PWFG_SESSION_N.
+# Context from the orchestrator (optional): PWFG_LAST_SUBTYPE, PWFG_SESSION_N,
+# PWFG_LAST_RECOVERED (1 if the previous session was rolled back after a crash).
 
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,11 +39,15 @@ if [ -n "${next:-}" ]; then
 fi
 
 case "${PWFG_LAST_SUBTYPE:-unknown}" in
-  success)         why="stopped cleanly (completed a checkpoint, or had nothing left it could do)";;
-  error_max_turns) why="hit the per-session turn cap mid-phase (context bound) — partial work may be on disk";;
-  unknown)         why="ended for an unrecorded reason";;
-  *)               why="ended with subtype=${PWFG_LAST_SUBTYPE}";;
+  success)                why="stopped cleanly (completed a checkpoint, or had nothing left it could do)";;
+  error_max_turns)        why="hit the per-session turn cap mid-phase (context bound) — partial work may be on disk";;
+  error_during_execution) why="ended abnormally (crashed)";;
+  unknown)                why="ended for an unrecorded reason";;
+  *)                      why="ended with subtype=${PWFG_LAST_SUBTYPE}";;
 esac
+if [ "${PWFG_LAST_RECOVERED:-0}" = 1 ]; then
+  why="$why; the orchestrator rolled the workspace back to the last green checkpoint, so any uncommitted work from that session is GONE (a copy is in 'git stash list' / the harness recovery log). Resume from the verified status below — do NOT assume partial edits survived"
+fi
 
 {
   printf '# Handoff — %s\n\n' "$(jq -r '.name' "$(pwfg_plan_path)")"

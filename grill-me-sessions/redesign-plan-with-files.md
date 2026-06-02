@@ -459,8 +459,33 @@ Build order: P0 brain (local, de-risk the loop+gate first) → P1 security bound
   the orchestrator records every run outcome to a durable local log and invokes a
   user-provided PWFG_NOTIFY_CMD (ntfy/webhook/Slack/SNS) on escalation
   (HUMAN_NEEDED) by default, so the human is pinged off-box; PWFG_NOTIFY_ON=all
-  also notifies on completion. Auto-RECOVERY of wedged/crashed states still
-  deferred (the loop escalates to a human; it does not self-heal the agent).
+  also notifies on completion.
+- AUTO-RECOVERY now BUILT (skill/bin/run-loop.sh, 2026-06-01) — the loop self-heals
+  a CRASHED session (subtype=error_during_execution, or a non-zero exit with no
+  result JSON) by rolling its uncommitted work back to the last green checkpoint
+  (git stash; recoverable) and retrying a FRESH session, bounded by
+  PWFG_RECOVER_LIMIT (default 2) CONSECUTIVE crashes — the disposable design's
+  natural self-heal, since continuity already lives on disk. The counter resets on
+  any productive/clean session, so transient crashes across a long run are tolerated
+  and only a persistent crash loop escalates (with a DISTINCT "environment/agent
+  fault, NOT a too-big phase" message + forensics — it never misdiagnoses a crash as
+  a stall). A WEDGED session (killed by a per-session wall clock, PWFG_SESSION_TIMEOUT
+  default 3600s via timeout/gtimeout, exit 124/137) is rolled back and fed through
+  the existing budget/stall machinery (bump the turns, else stall), so a slow/too-big
+  phase still escalates correctly as a stall rather than as a fake crash. KEY DESIGN
+  FINDINGS (from an adversarial design+impl review, all closed before commit): (a)
+  subtype=unknown with a CLEAN exit must NOT trigger rollback — else a healthy session
+  that printed a stray stdout line livelocks, stashing its own progress every round;
+  trust the gate instead. (b) a wall-clock kill must NOT be conflated with a crash —
+  conflation freezes the budget and inverts the diagnosis. (c) the timeout SIGKILL
+  path exits 137, not just 124. (d) HANDOFF.md/progress.md/state-dir are gitignored
+  before the first checkpoint, so a rollback sheds only the agent's gated CODE, never
+  the harness's own files (the state dir defaults INSIDE the workspace). (e)
+  PWFG_MAX_SESSIONS stays the ultimate termination backstop (every retry is a
+  session), and its escalation is cause-aware. CONSCIOUSLY STILL DEFERRED: a true
+  HANG with no timeout binary present (warned, not handled); recovering a wedged
+  human-attached interactive session; and richer crash triage (the loop treats all
+  crashes uniformly rather than parsing the specific failure).
 - Dynamic task-pulling (queue/poll); v1 is one-box-one-task-at-launch.
 - NixOS reproducibility (v1.5); Tailscale access (maybe later).
 - Quality residual: agent can "teach to the literal test"; mitigate with

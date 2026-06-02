@@ -111,9 +111,11 @@ Each session ends on either a **checkpoint** (a phase goes green → `subtype:
 success`) or the **turn cap** (`subtype: error_max_turns`); the orchestrator then
 runs `verify-all`, commits any newly-green phase as a checkpoint, regenerates a
 bounded fact-anchored `HANDOFF.md`, and launches a fresh session that resumes from
-disk. It stops on: gate green (done), agent 3-strike escalation, a cross-session
-**stall** (no new green in N sessions → human), an **infra error**, or a **session
-budget** cap.
+disk. A session that **crashes** or **wedges** is shed and retried fresh
+([auto-recovery](#auto-recovery-self-heals-a-crashed-or-wedged-session)). It stops
+on: gate green (done), agent 3-strike escalation, a cross-session **stall** (no new
+green in N sessions → human), an **infra error**, a crash/wedge loop that exhausts
+the recovery limit, or a **session budget** cap.
 
 It **never edits the locked plan.** A phase too big even at the *maximum*
 per-session budget surfaces as a stall and escalates to a human to re-author the
@@ -179,9 +181,49 @@ Set `PWFG_NOTIFY_ON=all` to also notify on `GREEN` completion. The agent's own
 3-strike `escalate.sh`, a cross-session stall, infra errors, and the session-budget
 cap all surface as `HUMAN_NEEDED` and trigger the channel.
 
+### Auto-recovery self-heals a crashed or wedged session
+
+A fresh session resuming from disk is exactly how the disposable design recovers
+from a session that died, so the orchestrator does that automatically instead of
+escalating on the first failure. It classifies an abnormal session end into two
+kinds and treats them differently:
+
+- A **crash** — `subtype: error_during_execution`, or a non-zero exit with no
+  result JSON — is shed and **retried from a fresh session** up to
+  `PWFG_RECOVER_LIMIT` (default `2`) *consecutive* times. The counter resets on any
+  productive or clean session, so occasional transient crashes across a long run are
+  tolerated; only a persistent crash loop escalates — with a **distinct** "this is an
+  environment/agent fault, *not* a too-big phase" message and pointers to the
+  forensics (it never tells a human to re-author the plan, which would be the wrong
+  fix). `subtype: unknown` with a *clean* exit is **not** treated as a crash — the
+  gate is trusted, so a healthy session that merely printed an odd log line is never
+  rolled back (which would livelock it).
+- A **wedge** — a session killed by the per-session wall clock (`PWFG_SESSION_TIMEOUT`,
+  default `3600`s, via `timeout`/`gtimeout`) — is rolled back and fed through the same
+  budget/stall machinery as a no-progress turn-cap: the budget is raised and the
+  session retried, and if sessions keep wedging even at the maximum budget it
+  escalates as a wedge (raise the timeout / `PWFG_TURNS_MAX`, or re-author). This
+  keeps a slow-but-too-big phase from being misdiagnosed as a crash. Wedge detection
+  needs a `timeout` binary; without one it warns and degrades (a true hang would
+  otherwise block the loop forever).
+
+Before any retry, the crashed/wedged session's **uncommitted** work is rolled back
+to the last green checkpoint with `git stash` (recoverable; the destructive
+`reset --hard` fallback archives untracked files first), and the tree is verified
+clean before the next session starts. Committed checkpoints are never touched.
+`HANDOFF.md`, `progress.md`, and the harness state dir are kept out of git, so a
+rollback only ever sheds the agent's own uncommitted *code* — never the handoff,
+the agent's notes, or the status cache. Forensics for every abnormal session land
+in `.harness/logs/recovery.log` and `.harness/recovery/`. `PWFG_RECOVER_RESET=0`
+keeps a crashed tree as-is (retry without rolling back); `PWFG_SESSION_TIMEOUT=0`
+disables wedge detection. `PWFG_MAX_SESSIONS` remains the ultimate backstop — every
+retry counts as a session, so the loop always terminates regardless of the
+recovery and stall counters.
+
 Knobs: turn budget `PWFG_TURNS_{BASE,PER_PHASE,MAX,BUMP}` (12/3/24/4, or
 `PWFG_TURNS_PER_SESSION` to fix it), `PWFG_MAX_SESSIONS` (10), `PWFG_STALL_LIMIT`
-(2), `PWFG_STOP_AT_CHECKPOINT` (1), `PWFG_GIT_CHECKPOINTS` (1), `PWFG_NARRATE` (0),
+(2), `PWFG_STOP_AT_CHECKPOINT` (1), `PWFG_GIT_CHECKPOINTS` (1), `PWFG_RECOVER_LIMIT`
+(2), `PWFG_RECOVER_RESET` (1), `PWFG_SESSION_TIMEOUT` (3600), `PWFG_NARRATE` (0),
 `PWFG_NARRATE_MODEL` (haiku), `PWFG_NOTIFY_CMD` (unset), `PWFG_NOTIFY_ON`
 (escalate).
 
@@ -226,6 +268,9 @@ Caveats that remain for P0 (closed in Phase 1):
 | Turn budget scales with progress | `pwfg_session_budget`: proactive + reactive bump |
 | Cut re-orientation | `handoff.sh` "Files for this phase" (EDIT / PROVE WITH / imports) |
 | Too-big phase → human, not auto-split | cross-session stall → `BLOCKED` "re-author the plan" |
+| Self-heal a crashed session | `run-loop.sh` rolls back + retries fresh, bounded by `PWFG_RECOVER_LIMIT` |
+| Self-heal a wedged session | wall-clock `PWFG_SESSION_TIMEOUT` → roll back → bump budget / stall |
+| Crash ≠ too-big phase (no misdiagnosis) | distinct, cause-aware escalations; forensics in `.harness/recovery/` |
 | Off-box escalation alert | `notify.sh` → `PWFG_NOTIFY_CMD` on `HUMAN_NEEDED` |
 
 ## Not in this skeleton (later phases)
