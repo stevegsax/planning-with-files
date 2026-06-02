@@ -8,11 +8,15 @@
 # it at a file it wrote. PWFG_PROOF_AS is deliberately NOT kept: it governs which
 # uid runs the proof and must come from the gov-owned env file, never the agent.
 
-Defaults:gov   env_keep += "PWFG_PROMPT PWFG_MAX_TURNS PWFG_MODEL PWFG_PROXY_PORT"
+# PWFG_PLAN is kept gov->agent so the proof wrapper (run as agent) reads the proof
+# from the locked plan; the value is gov's, the agent never sets it.
+Defaults:gov   env_keep += "PWFG_PROMPT PWFG_MAX_TURNS PWFG_MODEL PWFG_PROXY_PORT PWFG_PLAN"
 Defaults:agent env_keep += "PWFG_ENV_FILE"
 
-# gov launches the agent's claude session.
-gov   ALL=(agent) NOPASSWD: /srv/pwfg/bin/launch-agent.sh
+# gov launches the agent's claude session, and runs each phase's proof as the agent
+# uid via run-proof-as.sh (a FIXED gov-owned wrapper that reads the proof from the
+# locked plan — so this grant is one script, never an arbitrary `bash` as agent).
+gov   ALL=(agent) NOPASSWD: /srv/pwfg/bin/launch-agent.sh, /srv/pwfg/skill/bin/run-proof-as.sh
 
 # The agent reaches the verifier ONLY through these gov-owned scripts.
 agent ALL=(gov) NOPASSWD: /srv/pwfg/skill/bin/verify-task.sh, /srv/pwfg/skill/bin/verify-all.sh, /srv/pwfg/skill/bin/escalate.sh

@@ -69,13 +69,17 @@ mkdir -p "$SRV/skill"; cp -a "$SKILL/." "$SRV/skill/"
 chown -R "$GV:$G1" "$SRV/skill"; chmod -R u+rwX,go+rX "$SRV/skill"
 RUNSKILL="$SRV/skill"
 
-# gov needs to spawn the agent and the agent needs the narrow verify bridge; mirror
-# infra/bootstrap/sudoers.d/pwfg with the test identities + paths.
+# Mirror infra/bootstrap/sudoers.d/pwfg with the test identities + paths. The gov->agent
+# grant is NARROW (production-faithful): only the fake-agent launcher and the proof
+# wrapper — never an arbitrary `bash` as agent. PWFG_PLAN is kept gov->agent so the
+# wrapper reads the proof from the locked plan; PWFG_PROOF_AS is NOT kept agent->gov
+# (the agent must not choose the proof uid).
 SUDOERS="/etc/sudoers.d/pwfg-boundary-test"
+AGENT_WORK="$SRV/agent-work.sh"
 cat >"$SUDOERS" <<EOF
-Defaults:$GV env_keep += "PWFG_PROMPT PWFG_WORKSPACE PWFG_ENV_FILE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2"
-Defaults:$AG env_keep += "PWFG_ENV_FILE PWFG_PROOF_AS GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2"
-$GV ALL=($AG) NOPASSWD: ALL
+Defaults:$GV env_keep += "PWFG_PROMPT PWFG_WORKSPACE PWFG_PLAN PWFG_ENV_FILE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2"
+Defaults:$AG env_keep += "PWFG_ENV_FILE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2"
+$GV ALL=($AG) NOPASSWD: $AGENT_WORK, $RUNSKILL/bin/run-proof-as.sh
 $AG ALL=($GV) NOPASSWD: $RUNSKILL/bin/verify-all.sh, $RUNSKILL/bin/verify-task.sh, $RUNSKILL/bin/escalate.sh
 EOF
 chmod 0440 "$SUDOERS"
@@ -162,21 +166,19 @@ allow "boot-assert reports the boundary in force" \
       env PWFG_SRV="$SRV" PWFG_AGENT_USER="$AG" PWFG_IMDS_IP="$IMDS_IP" PWFG_KEY_CRED="$SRV/proxy/key" "$BOOT/boot-assert.sh"
 
 echo "== END-TO-END: gov drives the loop across the uid boundary -> GREEN =="
-# The launcher runs the 'agent' work as the agent uid (umask 002 so gov can later
-# manage the files), proving gov spawns agent, agent writes the workspace, and gov's
-# gate reads it. Proofs run as the agent uid too (PWFG_PROOF_AS), so agent code never
-# executes as gov.
-LAUNCHER="$SRV/launcher.sh"
-cat >"$LAUNCHER" <<EOF
+# The fake-agent worker runs AS the agent uid (umask 002 so gov can later manage the
+# files), proving gov spawns agent, agent writes the workspace, and gov's gate reads
+# it. It is a FIXED script invoked via the narrow gov->agent grant (no `sudo -u agent
+# bash`), mirroring production. Proofs likewise run as the agent uid via the
+# run-proof-as.sh wrapper (PWFG_PROOF_AS), so agent code never executes as gov.
+cat >"$AGENT_WORK" <<EOF
 #!/usr/bin/env bash
-# Runs as gov; does the agent's "work" AS the agent uid (umask 002 so gov can later
-# manage the files). The workspace is expanded here (gov env) and passed positionally
-# so the inner sudo need not preserve it.
-sudo -u $AG bash -c 'umask 002; cd "\$1" || exit 1
-  for n in 1 2; do [ -f "step\$n.done" ] || { : >"step\$n.done"; break; }; done' _ "\$PWFG_WORKSPACE"
+umask 002
+cd "\$1" || exit 1
+for n in 1 2; do [ -f "step\$n.done" ] || { : >"step\$n.done"; break; }; done
 printf '{"subtype":"success"}\n'
 EOF
-chmod 0755 "$LAUNCHER"; chown "$GV:$G1" "$LAUNCHER"
+chmod 0755 "$AGENT_WORK"; chown "$GV:$G1" "$AGENT_WORK"
 
 # git in this env may force commit signing; neutralize it + mark the repo safe for
 # the duration of these commands only (no persistent config change).
@@ -186,7 +188,7 @@ sudo -u "$GV" env $GI \
   PWFG_ENV_FILE="$SRV/gov/env" \
   PWFG_PROOF_AS="$AG" \
   PWFG_STOP_AT_CHECKPOINT=1 PWFG_MAX_SESSIONS=5 PWFG_STALL_LIMIT=2 \
-  PWFG_LAUNCH_CMD="$LAUNCHER" \
+  PWFG_LAUNCH_CMD="sudo -u $AG $AGENT_WORK $SRV/workspace" \
   bash "$RUNSKILL/bin/run-loop.sh" >"$SRV/loop.out" 2>&1
 loop_rc=$?
 
@@ -201,11 +203,14 @@ gp="$(sudo -u "$GV" jq '[.phases[]|select(.result=="pass")]|length' "$SRV/state/
 allow "workspace markers are agent-owned" bash -c "[ \"\$(stat -c %U '$SRV/workspace/step1.done')\" = '$AG' ]"
 
 echo "== agent -> gov verify bridge (narrow sudoers + env-file) =="
-# The agent sets the context vars, then reaches the verifier ONLY through the narrow
-# `sudo -u gov verify-all.sh` rule (env_keep carries PWFG_* across the boundary). The
-# command must be verify-all.sh itself — the sudoers rule permits nothing else.
+# The agent reaches the verifier ONLY through the narrow `sudo -u gov verify-all.sh`
+# rule; gov recovers its context from the gov-owned env file (PWFG_ENV_FILE). The
+# command must be verify-all.sh itself — the rule permits nothing else. PWFG_PROOF_AS
+# is deliberately NOT passed: it is not kept agent->gov (the agent can't choose the
+# proof uid), so bridge-path proofs run in-process as gov (the accepted residual; the
+# loop path above is where proofs run as the agent uid via the wrapper).
 allow "agent can run verify-all only via the gov bridge, sees GREEN" \
-      sudo -u "$AG" env PWFG_ENV_FILE="$SRV/gov/env" PWFG_PROOF_AS="$AG" $GI \
+      sudo -u "$AG" env PWFG_ENV_FILE="$SRV/gov/env" $GI \
         sudo -u "$GV" "$RUNSKILL/bin/verify-all.sh"
 
 echo
