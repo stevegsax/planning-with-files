@@ -68,6 +68,12 @@ SRV="$(mktemp -d -p /tmp pwfgbnd.XXXXXX)"; chmod 0755 "$SRV"
 mkdir -p "$SRV/skill"; cp -a "$SKILL/." "$SRV/skill/"
 chown -R "$GV:$G1" "$SRV/skill"; chmod -R u+rwX,go+rX "$SRV/skill"
 RUNSKILL="$SRV/skill"
+# launch-agent.sh runs AS the agent (Option A), so it too must live on a path the
+# agent can traverse/execute — deploy it gov-owned into the /tmp tree (mirrors
+# /srv/pwfg/bin on the box). Boot scripts ($BOOT) stay in-repo (root-run only).
+install -d -o "$GV" -g "$G1" -m 0755 "$SRV/bin"
+install -o "$GV" -g "$G1" -m 0755 "$BOOT/launch-agent.sh" "$SRV/bin/launch-agent.sh"
+LAUNCH_AGENT="$SRV/bin/launch-agent.sh"
 
 # Mirror infra/bootstrap/sudoers.d/pwfg with the test identities + paths. The gov->agent
 # grant is NARROW (production-faithful): only the fake-agent launcher and the proof
@@ -77,9 +83,9 @@ RUNSKILL="$SRV/skill"
 SUDOERS="/etc/sudoers.d/pwfg-boundary-test"
 AGENT_WORK="$SRV/agent-work.sh"
 cat >"$SUDOERS" <<EOF
-Defaults:$GV env_keep += "PWFG_PROMPT PWFG_WORKSPACE PWFG_PLAN PWFG_ENV_FILE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2"
+Defaults:$GV env_keep += "PWFG_PROMPT PWFG_MAX_TURNS PWFG_MODEL PWFG_PROXY_PORT PWFG_SRV PWFG_CLAUDE_BIN PWFG_STUB_OUT PWFG_WORKSPACE PWFG_PLAN PWFG_ENV_FILE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2"
 Defaults:$AG env_keep += "PWFG_ENV_FILE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1 GIT_CONFIG_KEY_2 GIT_CONFIG_VALUE_2"
-$GV ALL=($AG) NOPASSWD: $AGENT_WORK, $RUNSKILL/bin/run-proof-as.sh
+$GV ALL=($AG) NOPASSWD: $AGENT_WORK, $LAUNCH_AGENT, $RUNSKILL/bin/run-proof-as.sh
 $AG ALL=($GV) NOPASSWD: $RUNSKILL/bin/verify-all.sh, $RUNSKILL/bin/verify-task.sh, $RUNSKILL/bin/escalate.sh
 EOF
 chmod 0440 "$SUDOERS"
@@ -212,6 +218,33 @@ echo "== agent -> gov verify bridge (narrow sudoers + env-file) =="
 allow "agent can run verify-all only via the gov bridge, sees GREEN" \
       sudo -u "$AG" env PWFG_ENV_FILE="$SRV/gov/env" $GI \
         sudo -u "$GV" "$RUNSKILL/bin/verify-all.sh"
+
+echo "== LAUNCH path: gov starts the agent via launch-agent.sh under the narrow rule =="
+# launch-agent.sh runs AS the agent (Option A): gov invokes it through the SAME narrow
+# gov->agent grant as the proof wrapper (no `env`/`claude`/arbitrary command), and it
+# execs claude directly. A `claude` STUB records its env + args so we can assert the
+# crossing isn't denied, claude ran as the agent uid, the proxy base-url is set with no
+# real key, and the gov-owned Stop-hook --settings is carried. (Real claude needs an
+# API key; the stub validates the sudo crossing + env scrubbing structurally.)
+STUB_OUT="$SRV/workspace/claude-invocation.txt"
+cat >"$SRV/claude-stub" <<EOF
+#!/usr/bin/env bash
+{ echo "ARGS: \$*"; echo "WHOAMI=\$(id -un)"
+  echo "BASE_URL=\${ANTHROPIC_BASE_URL:-<unset>}"; echo "OAUTH=\${CLAUDE_CODE_OAUTH_TOKEN:-<unset>}"
+} >"\${PWFG_STUB_OUT:-/dev/null}"
+printf '{"subtype":"success"}\n'
+EOF
+chmod 0755 "$SRV/claude-stub"; chown "$GV:$G1" "$SRV/claude-stub"
+lout="$(sudo -u "$GV" env PWFG_PROMPT="hi" PWFG_SRV="$SRV" PWFG_PROXY_PORT="8787" \
+          PWFG_CLAUDE_BIN="$SRV/claude-stub" PWFG_STUB_OUT="$STUB_OUT" PWFG_MODEL=sonnet PWFG_MAX_TURNS=5 \
+          sudo -u "$AG" "$LAUNCH_AGENT" 2>&1)"; lrc=$?
+[ "$lrc" -eq 0 ] && ok "gov launches launch-agent.sh as agent (narrow rule, not denied)" \
+  || { no "gov launches launch-agent.sh as agent (rc=$lrc)"; printf '%s\n' "$lout" | head -3 | sed 's/^/       /'; }
+printf '%s' "$lout" | grep -q '"subtype":"success"' && ok "agent session produced result JSON" || no "agent session produced result JSON"
+grep -q "WHOAMI=$AG" "$STUB_OUT" 2>/dev/null && ok "claude ran AS the agent uid" || no "claude ran AS the agent uid"
+grep -q "BASE_URL=http://127.0.0.1:8787" "$STUB_OUT" 2>/dev/null && ok "ANTHROPIC_BASE_URL points at the proxy" || no "ANTHROPIC_BASE_URL points at the proxy"
+grep -q "OAUTH=<unset>" "$STUB_OUT" 2>/dev/null && ok "no CLAUDE_CODE_OAUTH_TOKEN in the agent env" || no "no CLAUDE_CODE_OAUTH_TOKEN in the agent env"
+grep -q -- "--settings $SRV/gov/settings.json" "$STUB_OUT" 2>/dev/null && ok "carries the gov-owned Stop-hook --settings" || no "carries the gov-owned --settings"
 
 echo
 echo "== $PASS passed, $FAIL failed =="
