@@ -89,6 +89,13 @@ printf 'half-written work when the session wedged\n' >"$PWFG_WORKSPACE/wedge_par
 sleep 3
 printf '{"subtype":"success"}\n'
 EOF
+# Simulates a brokering-proxy budget breach: the proxy wrote the sentinel and the 403
+# made the session end abnormally (subtype=error_during_execution + nonzero exit).
+cat >"$BIN/budget_breach" <<'EOF'
+#!/usr/bin/env bash
+[ -n "${PWFG_PROXY_SENTINEL:-}" ] && printf 'cost cap reached: 25.01 >= 25.00 USD\n' >"$PWFG_PROXY_SENTINEL"
+printf '{"subtype":"error_during_execution"}\n'; exit 1
+EOF
 cat >"$BIN/notify_sink" <<'EOF'
 #!/usr/bin/env bash
 { echo "STATUS=$PWFG_NOTIFY_STATUS"; echo "TITLE=$PWFG_NOTIFY_TITLE"
@@ -201,6 +208,17 @@ orch_run sessionerror
 assert_ok  "RESULT is HUMAN NEEDED" "printf '%s' \"\$ORCH_OUT\" | grep -q 'RESULT: HUMAN NEEDED'"
 assert_ok  "budget message names the abnormal cause" "grep -qi 'ended abnormally' \"$PWFG_STATE_DIR/BLOCKED\""
 assert_ok  "and still cites the budget cap" "grep -qi 'max sessions' \"$PWFG_STATE_DIR/BLOCKED\""
+
+echo "== proxy budget ceiling escalates as a budget breach, NOT a crash (no recovery/retry) =="
+bsent="$(mktemp -u)"; rm -f "$bsent"; export PWFG_PROXY_SENTINEL="$bsent"
+export PWFG_MAX_SESSIONS=5 PWFG_STALL_LIMIT=2
+orch_run budget_breach
+assert_ok  "RESULT is HUMAN NEEDED" "printf '%s' \"\$ORCH_OUT\" | grep -q 'RESULT: HUMAN NEEDED'"
+assert_ok  "BLOCKED diagnoses the LLM budget ceiling" "grep -qi 'budget ceiling' \"$PWFG_STATE_DIR/BLOCKED\""
+assert_no  "did NOT auto-recover (no crash retry)" "printf '%s' \"\$ORCH_OUT\" | grep -q 'auto-recovering'"
+assert_no  "did NOT misdiagnose as an abnormal/crash loop" "grep -qi 'ended abnormally' \"$PWFG_STATE_DIR/BLOCKED\""
+assert_no  "stopped after one session (no second launch)" "printf '%s' \"\$ORCH_OUT\" | grep -q 'session 2 start'"
+rm -f "$bsent"; unset PWFG_PROXY_SENTINEL
 
 echo "== turn budget: formula scales with progress (deterministic) =="
 # shellcheck disable=SC1091

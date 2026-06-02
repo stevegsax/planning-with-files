@@ -58,7 +58,7 @@ install -o root -g root -m 0440 "$SRC/infra/bootstrap/sudoers.d/pwfg" /etc/sudoe
 visudo -cf /etc/sudoers.d/pwfg
 
 # --- systemd units ---
-for u in pwfg-proxy pwfg-loop pwfg-boot-assert; do
+for u in pwfg-imds-lock pwfg-proxy pwfg-loop pwfg-boot-assert; do
   install -o root -g root -m 0644 "$SRC/infra/bootstrap/units/$u.service" "/etc/systemd/system/$u.service"
 done
 

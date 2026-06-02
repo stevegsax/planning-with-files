@@ -39,6 +39,9 @@ trap cleanup EXIT
 
 port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && { exec 3>&- 3<&-; return 0; }; return 1; }
 wait_port() { for _ in $(seq 1 50); do port_open "$1" && return 0; sleep 0.2; done; return 1; }
+# The proxy records usage in the post-stream `finally` (after the client gets EOF),
+# so a check immediately after curl can race it under load. Wait for the file.
+wait_file() { for _ in $(seq 1 50); do [ -s "$1" ] && return 0; sleep 0.1; done; return 1; }
 
 # --- start the recording fake upstream (stdlib only) ---
 PWFG_FAKE_PORT="$FPORT" PWFG_FAKE_HEADERS="$HEADERS" python3 proxy/tests/fake_upstream.py &
@@ -76,14 +79,20 @@ recv_xapikey="$(jq -r '.["x-api-key"] // ""' "$HEADERS" 2>/dev/null)"
 [ "$recv_xapikey" != "LEAKED-INBOUND-KEY" ] && ok "inbound x-api-key was stripped" || no "inbound x-api-key was stripped"
 [ "$(jq -r '.authorization // "ABSENT"' "$HEADERS")" = "ABSENT" ] && ok "inbound Authorization was stripped" || no "inbound Authorization was stripped"
 [ "$(jq -r '.["anthropic-version"] // ""' "$HEADERS")" = "2023-06-01" ] && ok "anthropic-version was preserved" || no "anthropic-version was preserved"
+# H3: the proxy must forbid upstream compression so passthrough stays byte-faithful
+# and usage is readable. (The fake upstream gzips iff gzip is requested, so a proxy
+# that let gzip through would also fail the byte-exact + cost assertions below.)
+[ "$(jq -r '.["accept-encoding"] // ""' "$HEADERS")" = "identity" ] && ok "upstream compression disabled (accept-encoding: identity)" || no "upstream compression disabled (got '$(jq -r '.["accept-encoding"] // ""' "$HEADERS")')"
 
 echo "== audit + ledger =="
 audit="$TMP/state/audit.jsonl"
+wait_file "$audit"  # the allow accounting lands in the post-stream finally
 if [ -f "$audit" ]; then ok "audit log written"; else no "audit log written"; fi
 allow_cost="$(grep '"outcome":"allow"' "$audit" 2>/dev/null | tail -1 | jq -r '.cost_usd' 2>/dev/null)"
 [ -n "$allow_cost" ] && [ "$allow_cost" != "0" ] && ok "allow line records a non-zero cost ($allow_cost)" || no "allow line records a non-zero cost (got '$allow_cost')"
 # 1000 input @3/M + 500 output @15/M + 200 cache_read @0.30/M = 0.01056
 [ "$allow_cost" = "0.01056" ] && ok "cost matches the priced usage exactly" || no "cost matches the priced usage (got '$allow_cost')"
+wait_file "$TMP/state/ledger.json"
 [ -f "$TMP/state/ledger.json" ] && ok "ledger persisted to disk" || no "ledger persisted to disk"
 
 echo "== the dummy key never leaks =="

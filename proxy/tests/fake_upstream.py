@@ -11,6 +11,7 @@ Env: PWFG_FAKE_PORT, PWFG_FAKE_HEADERS
 
 from __future__ import annotations
 
+import gzip
 import json
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -42,11 +43,22 @@ class Handler(BaseHTTPRequestHandler):
         if length:
             self.rfile.read(length)
         self._record()
+        # Honor the request's accept-encoding like a real upstream: if gzip is asked
+        # for (and identity is not), compress the body and label it. A correct proxy
+        # forwards `accept-encoding: identity`, so it gets the plain body; a proxy that
+        # lets gzip through gets a compressed body it must NOT mislabel — which the
+        # byte-exact + usage assertions then catch.
+        ae = (self.headers.get("accept-encoding") or "").lower()
+        body, encoding = SSE_BODY, None
+        if "gzip" in ae and "identity" not in ae:
+            body, encoding = gzip.compress(SSE_BODY), "gzip"
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
-        self.send_header("content-length", str(len(SSE_BODY)))
+        if encoding:
+            self.send_header("content-encoding", encoding)
+        self.send_header("content-length", str(len(body)))
         self.end_headers()
-        self.wfile.write(SSE_BODY)
+        self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802
         self._serve()

@@ -6,8 +6,9 @@ __pycache__/
 .mypy_cache/
 .venv/
 
-# CDK synth output
+# CDK synth output + cached context lookups (generated)
 cdk.out/
+cdk.context.json
 
 # Harness run state (created under a run dir; never committed)
 .harness/

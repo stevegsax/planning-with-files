@@ -1,0 +1,20 @@
+[Unit]
+Description=pwfg IMDS owner-match lock (re-applied every boot)
+# Re-install the agent-uid DROP on EVERY boot rather than relying on iptables-save /
+# netfilter-persistent, which is inert on AL2023 (no iptables-services restore unit).
+# Must run before anything that depends on the lock being in force.
+DefaultDependencies=no
+After=local-fs.target network-pre.target
+Before=pwfg-boot-assert.service pwfg-proxy.service pwfg-loop.service network-online.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PWFG_AGENT_USER=agent
+# Persistence is now this unit (every boot); the in-script iptables-save is best-effort.
+Environment=PWFG_IMDS_PERSIST=0
+ExecStart=/srv/pwfg/bin/imds-lock.sh
+
+[Install]
+WantedBy=multi-user.target

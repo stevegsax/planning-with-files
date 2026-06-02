@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from hypothesis import given
 from hypothesis import strategies as st
+
 from proxy import core
 
 

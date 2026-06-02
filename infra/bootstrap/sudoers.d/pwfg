@@ -2,11 +2,14 @@
 #   gov -> agent : spawn the unprivileged worker (the launch seam)
 #   agent -> gov : the NARROW verify bridge (safe because proof strings come only
 #                  from the locked plan — TRAP 1 is closed in common.sh)
-# Keep PWFG_* context across the boundary so common.sh's PWFG_ENV_FILE hook and the
-# proof-as-agent setting survive sudo's env reset.
+# Keep PWFG_* context across the boundary. The agent->gov direction carries ONLY
+# PWFG_ENV_FILE (the path to the gov-owned env file); common.sh refuses to source
+# it unless it is gov-owned and not group/other-writable, so the agent cannot point
+# it at a file it wrote. PWFG_PROOF_AS is deliberately NOT kept: it governs which
+# uid runs the proof and must come from the gov-owned env file, never the agent.
 
 Defaults:gov   env_keep += "PWFG_PROMPT PWFG_MAX_TURNS PWFG_MODEL PWFG_PROXY_PORT"
-Defaults:agent env_keep += "PWFG_ENV_FILE PWFG_PROOF_AS"
+Defaults:agent env_keep += "PWFG_ENV_FILE"
 
 # gov launches the agent's claude session.
 gov   ALL=(agent) NOPASSWD: /srv/pwfg/bin/launch-agent.sh

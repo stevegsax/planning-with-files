@@ -139,6 +139,21 @@ if command -v uv >/dev/null 2>&1; then
   assert_no  "bad plan fails JSON Schema"   "uv run --quiet --with check-jsonschema check-jsonschema --schemafile \"$PWFG_SCHEMA\" \"$badbase/no-proof.json\""
 fi
 
+echo "== PWFG_ENV_FILE guard (boundary: refuse agent-supplied / writable env files) =="
+# Runs everywhere (no root needed): exercises the common.sh source guard that stops
+# an agent pointing a gov-run tool at a file it wrote. The whole-boundary proof is
+# tests/test_boundary.sh (root); this locks the load-bearing no-op/refuse contract.
+gtmp="$(mktemp -d)"
+printf 'export PWFG_GUARD_PROBE=ok\n'  >"$gtmp/safe.env";   chmod 600 "$gtmp/safe.env"
+printf 'export PWFG_GUARD_PROBE=bad\n' >"$gtmp/unsafe.env"; chmod 666 "$gtmp/unsafe.env"
+probe() { PWFG_ENV_FILE="$1" bash -c ". \"$SKILL/lib/common.sh\"; printf '%s' \"\${PWFG_GUARD_PROBE:-<unset>}\"" 2>/dev/null; }
+assert_eq "owned + 0600 env file IS sourced"          "$(probe "$gtmp/safe.env")"   "ok"
+assert_eq "group/other-writable env file is REFUSED"  "$(probe "$gtmp/unsafe.env")"  "<unset>"
+assert_eq "missing env file is a clean no-op"         "$(probe "$gtmp/nope.env")"    "<unset>"
+warn="$(PWFG_ENV_FILE="$gtmp/unsafe.env" bash -c ". \"$SKILL/lib/common.sh\"" 2>&1 >/dev/null)"
+printf '%s' "$warn" | grep -qi 'refusing to source' && ok "refusal warns on stderr" || no "refusal warns on stderr"
+rm -rf "$gtmp"
+
 echo
 printf '== %d passed, %d failed ==\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
