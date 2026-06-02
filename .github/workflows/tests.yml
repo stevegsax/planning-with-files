@@ -1,0 +1,57 @@
+# Repo CI: the offline-buildable P1 suites. Runs the existing skill suites plus the
+# new proxy, boundary, and CDK-synth tests. The boundary test creates throwaway OS
+# users + iptables rules (it self-skips when it cannot), so it runs under sudo.
+
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  suites:
+    runs-on: ubuntu-latest
+    env:
+      # The hosted runner has no commit-signing helper; the orchestrator's git
+      # checkpoints must not require signing.
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: commit.gpgsign
+      GIT_CONFIG_VALUE_0: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tooling (uv, jq)
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          sudo apt-get update -y && sudo apt-get install -y jq
+
+      - name: Skill suites (harness / orchestrator / ledger)
+        run: |
+          bash tests/test_harness.sh
+          bash tests/test_orchestrator.sh
+          bash tests/test_ledger.sh
+
+      - name: Proxy — pure core + integration
+        run: |
+          uv run --python 3.13 --with pytest --with hypothesis python -m pytest proxy/tests/test_core.py -q
+          bash tests/test_proxy.sh
+
+      - name: Proxy — lint + types
+        run: |
+          uv run --python 3.13 --with ruff ruff check proxy/
+          uv run --python 3.13 --with mypy --with starlette --with httpx --with uvicorn \
+            mypy --strict proxy/core.py proxy/app.py
+
+      - name: CDK — synth + cdk-nag + lint + types
+        working-directory: infra
+        run: |
+          uv run --python 3.13 --with "aws-cdk-lib>=2.140,<3" --with "constructs>=10,<11" \
+            --with "cdk-nag>=2.28" --with pytest python -m pytest tests/test_synth.py -q
+          uv run --python 3.13 --with ruff ruff check .
+
+      - name: OS boundary acceptance (creates throwaway users; needs root)
+        run: sudo -E bash tests/test_boundary.sh

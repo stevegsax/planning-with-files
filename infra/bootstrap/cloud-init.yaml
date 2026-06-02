@@ -1,0 +1,22 @@
+#cloud-config
+# cloud-init user-data for the agent host. Order matters: create the users and the
+# /srv/pwfg layout FIRST, then install the IMDS owner-match lock (it references the
+# agent uid), then assert the boundary, then start the proxy and the loop. The heavy
+# lifting lives in versioned scripts (bootstrap/bin/*) so this file stays readable;
+# on a baked AMI (P2) they are already present, otherwise bootstrap.sh fetches them.
+write_files:
+  - path: /etc/profile.d/pwfg-umask.sh
+    permissions: "0644"
+    content: |
+      # The agent uses umask 002 so the gov user (shared 'pwfgshare' group) can drive
+      # git checkpoints / recovery on the agent-owned workspace.
+      if [ "$(id -un)" = "agent" ]; then umask 002; fi
+
+runcmd:
+  - set -euxo pipefail
+  - /opt/pwfg/bootstrap/bin/bootstrap.sh
+  - PWFG_AGENT_USER=agent /opt/pwfg/bootstrap/bin/imds-lock.sh
+  - systemctl daemon-reload
+  - systemctl enable --now pwfg-boot-assert.service
+  - systemctl enable --now pwfg-proxy.service
+  - systemctl enable --now pwfg-loop.service

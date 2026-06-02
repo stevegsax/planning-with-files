@@ -4,6 +4,10 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.venv/
+
+# CDK synth output
+cdk.out/
 
 # Harness run state (created under a run dir; never committed)
 .harness/

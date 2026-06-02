@@ -15,6 +15,15 @@
 
 set -uo pipefail
 
+# When a tool is invoked across the OS-uid boundary via `sudo` (e.g. the agent
+# calls verify-task.sh as `gov`, or the Stop hook runs as `gov`), sudo strips the
+# inherited PWFG_* environment. PWFG_ENV_FILE names a file of `export PWFG_*=...`
+# lines for those tools to re-source so they recover their context. Unset in the
+# laptop/CI path (env is inherited normally) -> a no-op, so existing behavior and
+# the test suites are unchanged.
+: "${PWFG_ENV_FILE:=}"
+[ -n "$PWFG_ENV_FILE" ] && [ -f "$PWFG_ENV_FILE" ] && . "$PWFG_ENV_FILE"
+
 pwfg_die() { printf 'pwfg: %s\n' "$*" >&2; exit 1; }
 pwfg_need() { command -v "$1" >/dev/null 2>&1 || pwfg_die "required tool not found: $1"; }
 
@@ -96,7 +105,14 @@ pwfg_run_proof() {
   [ -n "$proof" ] || pwfg_die "phase has no proof command: $id"
   workdir="$(pwfg_workdir)" || exit 1
   log="$(pwfg_state_dir)/logs/$id.txt"
-  ( cd "$workdir" && bash -c "$proof" ) >"$log" 2>&1
+  # Optional hardening (the box sets PWFG_PROOF_AS=agent): drop the proof to the
+  # agent uid so the agent's code — which a pytest proof IMPORTS into the test
+  # process — never executes as the privileged `gov` user. The proof STRING still
+  # comes only from the locked plan (closes TRAP 1 regardless of who runs it), and
+  # the log fd is opened here by the caller (gov) so the agent inherits a write
+  # handle without owning the gov-owned state dir. Empty PWFG_PROOF_AS (laptop/CI)
+  # == today's behavior, so the test suites are unchanged.
+  ( cd "$workdir" && ${PWFG_PROOF_AS:+sudo -u "$PWFG_PROOF_AS"} bash -c "$proof" ) >"$log" 2>&1
 }
 
 # ---- derived-status cache (advisory, agent-writable; the authoritative gate

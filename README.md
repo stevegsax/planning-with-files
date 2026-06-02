@@ -50,14 +50,34 @@ test-planning-with-files/
 │   ├── locked/                     # plan.json + sealed_check.py + tests/
 │   ├── workspace/ledger/           # 5 stub modules the agent implements
 │   └── _reference/                 # reference modules (self-test)
-└── tests/
-    ├── test_harness.sh             # deterministic gate/tool self-test (no LLM)
-    ├── test_orchestrator.sh        # deterministic orchestrator self-test (no LLM)
-    ├── test_ledger.sh              # deterministic ledger self-test (no LLM)
-    └── fixtures/
-        ├── orchestrator/           # marker-file plan for the orchestrator test
-        └── narrate/                # sample transcript for the digest test
+├── tests/
+│   ├── test_harness.sh             # deterministic gate/tool self-test (no LLM)
+│   ├── test_orchestrator.sh        # deterministic orchestrator self-test (no LLM)
+│   ├── test_ledger.sh              # deterministic ledger self-test (no LLM)
+│   ├── test_proxy.sh               # P1: brokering proxy vs a recording fake upstream
+│   ├── test_boundary.sh            # P1: OS-ownership boundary (root; throwaway users)
+│   └── fixtures/
+├── proxy/                          # P1: LLM brokering proxy (function core + shell)
+│   ├── core.py                     # pure: cost / caps / parse_usage / audit_line
+│   ├── app.py                      # shell: Starlette+httpx streaming passthrough
+│   └── tests/test_core.py          # pytest/hypothesis pure-core tests
+├── infra/                          # P1: AWS CDK (Python) — synth + cdk-nag
+│   ├── app.py  aspects.py  stacks/ # Network / Iam / AgentHost stacks
+│   ├── bootstrap/                  # cloud-init, systemd units, sudoers, imds-lock
+│   └── tests/test_synth.py         # offline synth + nag assertions
+└── docs/P1-provisioning.md         # the out-of-band AWS/secrets/CI deploy runbook
 ```
+
+## Phase 1 — the real security boundary
+
+Phase 0's workspace/state split is a *convention* under one OS user. Phase 1 makes
+it an enforced boundary on a cloud VM: three OS users (`agent`/`gov`/`proxy`), an
+on-box IMDS lock, the LLM key brokered by a loopback proxy (hidden + cost-capped +
+audited), and an off-box CI gate. This repo holds the offline-buildable half; see
+`docs/P1-provisioning.md` for the AWS deploy steps. The boundary itself is proven by
+`sudo tests/test_boundary.sh` (creates throwaway users and checks the agent cannot
+edit what judges it, read the key/audit, or reach IMDS — while gov still drives the
+loop to GREEN across the uid split).
 
 ## Run the deterministic self-test
 
