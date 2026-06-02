@@ -180,22 +180,42 @@ class Broker:
         body = await request.body()
         model = _model_of(body)
 
-        # Pre-flight gate, against spend already incurred + the kill switch.
-        if cfg.kill_path.exists():
-            await self._record(model, core.Usage(), "deny:kill-switch")
-            return self._deny_response("proxy kill switch engaged", 403)
-        decision = core.check_caps(self._ledger, cfg.caps)
-        if isinstance(decision, core.Deny):
+        # Pre-flight gate against spend already incurred + the kill switch. Read the
+        # ledger UNDER THE LOCK so the cap decision sees a consistent snapshot and
+        # concurrent requests can't each pass against a torn/stale ledger. (_record
+        # also takes the lock, so we decide here and record below, outside the lock,
+        # to avoid re-entrant deadlock. Cost remains one-in-flight-request granular,
+        # as the design accepts: a request already streaming is only billed in its
+        # finally, so a peer that gates before that can still proceed once.)
+        deny_kind: str | None = None
+        deny_reason: str = ""
+        deny_status: int = 403
+        async with self._lock:
+            if cfg.kill_path.exists():
+                deny_kind, deny_reason = "deny:kill-switch", "proxy kill switch engaged"
+            else:
+                decision = core.check_caps(self._ledger, cfg.caps)
+                if isinstance(decision, core.Deny):
+                    deny_kind = "deny:cap"
+                    deny_reason, deny_status = decision.reason, decision.status
+        if deny_kind == "deny:cap":
             cfg.sentinel_path.parent.mkdir(parents=True, exist_ok=True)
-            cfg.sentinel_path.write_text(decision.reason + "\n")
-            await self._record(model, core.Usage(), "deny:cap")
-            return self._deny_response(decision.reason, decision.status)
+            cfg.sentinel_path.write_text(deny_reason + "\n")
+        if deny_kind is not None:
+            await self._record(model, core.Usage(), deny_kind)
+            return self._deny_response(deny_reason, deny_status)
 
         # Build the upstream request: strip inbound auth, inject the real key.
         out_headers = {
             k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQUEST_HEADERS
         }
         out_headers["x-api-key"] = cfg.api_key
+        # Forbid upstream compression. We strip the client's accept-encoding (above), so
+        # httpx would otherwise inject `gzip, deflate` and we'd forward raw compressed
+        # bytes while dropping content-encoding (a corrupt body for the client AND a
+        # usage tee that can't read it). Requesting identity keeps the body plain, so
+        # passthrough stays byte-faithful and the accounting can parse `usage`.
+        out_headers["accept-encoding"] = "identity"
         url = cfg.upstream + request.url.path
         if request.url.query:
             url += "?" + request.url.query

@@ -24,10 +24,19 @@ class NetworkStack(Stack):
         scope: Construct,
         construct_id: str,
         *,
-        git_cidr: str = "0.0.0.0/0",
+        git_cidr: str = "",
         env: Environment | None = None,
     ) -> None:
         super().__init__(scope, construct_id, env=env)
+
+        # Fail closed: a wildcard egress would defeat the boundary. An explicit
+        # 0.0.0.0/0 is rejected; an empty git_cidr simply yields no git egress rule
+        # (set -c git_cidr=<host/CIDR> to enable it on deploy).
+        if git_cidr == "0.0.0.0/0":
+            raise ValueError(
+                "git_cidr must be a specific host CIDR, not 0.0.0.0/0 "
+                "(egress fails closed for the agent boundary)"
+            )
 
         self.vpc = ec2.Vpc(
             self,
@@ -70,11 +79,12 @@ class NetworkStack(Stack):
             ec2.Port.tcp(443),
             "443 to in-VPC interface endpoints (SSM, logs)",
         )
-        self.instance_sg.add_egress_rule(
-            ec2.Peer.ipv4(git_cidr),
-            ec2.Port.tcp(443),
-            "443 to the git host (and Anthropic, reached via the on-box proxy)",
-        )
+        if git_cidr:
+            self.instance_sg.add_egress_rule(
+                ec2.Peer.ipv4(git_cidr),
+                ec2.Port.tcp(443),
+                "443 to the git host (and Anthropic, reached via the on-box proxy)",
+            )
 
         NagSuppressions.add_resource_suppressions(
             self.instance_sg,

@@ -94,3 +94,28 @@ def test_vpc_is_isolated_no_nat_or_igw(app: App) -> None:
     tpl = _template(app, "PwfgNetwork")
     tpl.resource_count_is("AWS::EC2::NatGateway", 0)
     tpl.resource_count_is("AWS::EC2::InternetGateway", 0)
+
+
+def test_egress_fails_closed_no_wildcard(app: App) -> None:
+    # With no -c git_cidr (the offline/test path), the INSTANCE SG must NOT egress to
+    # 0.0.0.0/0 — egress fails closed rather than opening to the whole Internet. (The
+    # per-endpoint SGs legitimately allow-all outbound; scope to the instance SG by
+    # its description, as test_no_inbound_security_group_rules does.)
+    tpl = _template(app, "PwfgNetwork")
+    instance_sgs = [
+        res
+        for res in tpl.find_resources("AWS::EC2::SecurityGroup").values()
+        if "agent host" in str(res.get("Properties", {}).get("GroupDescription", ""))
+    ]
+    assert instance_sgs, "instance SG not found by description"
+    for res in instance_sgs:
+        for rule in res["Properties"].get("SecurityGroupEgress", []) or []:
+            assert rule.get("CidrIp") != "0.0.0.0/0", f"wildcard egress on the instance SG: {rule}"
+
+
+def test_explicit_wildcard_git_cidr_is_rejected() -> None:
+    # Passing an explicit 0.0.0.0/0 must fail loudly (fail closed), not synthesize.
+    from stacks.network_stack import NetworkStack
+
+    with pytest.raises(ValueError, match="0.0.0.0/0"):
+        NetworkStack(App(), "PwfgNetworkWildcard", git_cidr="0.0.0.0/0")

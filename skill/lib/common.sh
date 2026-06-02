@@ -15,14 +15,39 @@
 
 set -uo pipefail
 
+# A PWFG_ENV_FILE is safe to source ONLY if it is owned by the current effective
+# user and is NOT writable by group or other. The agent can SET PWFG_ENV_FILE
+# (it crosses the agent->gov sudo via env_keep), so without this check it could
+# point a gov-run tool (the Stop hook / verify bridge) at a file it wrote in its
+# own workspace and get arbitrary code executed AS gov — defeating the boundary.
+# This guard refuses any agent-owned or group/other-writable file. Portable across
+# GNU and BSD stat; fails safe (treats an unreadable mode as unsafe).
+pwfg_env_file_is_safe() {
+  local f="$1" owner mode
+  [ -f "$f" ] || return 1
+  owner="$(stat -c '%u' "$f" 2>/dev/null || stat -f '%u' "$f" 2>/dev/null || echo -1)"
+  [ "$owner" = "$(id -u)" ] || return 1
+  mode="$(stat -c '%a' "$f" 2>/dev/null || stat -f '%Lp' "$f" 2>/dev/null || echo 777)"
+  [ "$(( 8#$mode & 022 ))" -eq 0 ] || return 1
+  return 0
+}
+
 # When a tool is invoked across the OS-uid boundary via `sudo` (e.g. the agent
 # calls verify-task.sh as `gov`, or the Stop hook runs as `gov`), sudo strips the
 # inherited PWFG_* environment. PWFG_ENV_FILE names a file of `export PWFG_*=...`
 # lines for those tools to re-source so they recover their context. Unset in the
 # laptop/CI path (env is inherited normally) -> a no-op, so existing behavior and
-# the test suites are unchanged.
+# the test suites are unchanged. The gov-owned /srv/pwfg/gov/env passes the guard;
+# an agent-supplied path does not.
 : "${PWFG_ENV_FILE:=}"
-[ -n "$PWFG_ENV_FILE" ] && [ -f "$PWFG_ENV_FILE" ] && . "$PWFG_ENV_FILE"
+if [ -n "$PWFG_ENV_FILE" ]; then
+  if pwfg_env_file_is_safe "$PWFG_ENV_FILE"; then
+    . "$PWFG_ENV_FILE"
+  else
+    printf 'pwfg: refusing to source PWFG_ENV_FILE (not owned by %s, or group/other-writable): %s\n' \
+      "$(id -un 2>/dev/null || echo "$(id -u)")" "$PWFG_ENV_FILE" >&2
+  fi
+fi
 
 pwfg_die() { printf 'pwfg: %s\n' "$*" >&2; exit 1; }
 pwfg_need() { command -v "$1" >/dev/null 2>&1 || pwfg_die "required tool not found: $1"; }

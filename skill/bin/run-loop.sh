@@ -50,6 +50,11 @@ pwfg_need jq; pwfg_need git
 : "${PWFG_RECOVER_RESET:=1}"      # 1 = roll the workspace back to the last checkpoint on a crash/wedge
 : "${PWFG_SESSION_TIMEOUT:=3600}" # per-session wall clock (seconds); 0 disables wedge detection
 TIMEOUT_BIN=""                    # resolved at init to timeout|gtimeout|"" (none)
+# Brokering-proxy hard cost ceiling: full path to the proxy's PROXY_BUDGET_EXHAUSTED
+# sentinel. When the proxy refuses on a spent budget it writes this file; a 403 then
+# surfaces as an abnormal session end, which must NOT be misread as a crash to roll
+# back and retry. Empty (laptop/CI: no proxy) -> the check is a no-op.
+: "${PWFG_PROXY_SENTINEL:=}"
 
 ws="$(pwfg_workspace)"; sd="$(pwfg_state_dir)"
 # Canonicalize so the state-dir-inside-workspace prefix test (gitignore seeding) is
@@ -261,6 +266,23 @@ while :; do
     log "session $session end: subtype=$subtype  rc=$launch_rc  cost=\$${cost}  (total \$${total_cost})"
   fi
   last_was_crash=$is_crash; last_was_wedge=$is_wedge; last_kind="${crash_kind:-subtype=$subtype}"
+
+  # Proxy budget ceiling: a hard cost cap is terminal and HUMAN-owned. Catch it
+  # BEFORE crash classification / recovery so the resulting 403 is never rolled back
+  # (which would stash the agent's work) or retried (every retry would 403 again and
+  # then be misdiagnosed as an "environment/agent fault").
+  if [ -n "$PWFG_PROXY_SENTINEL" ] && [ -f "$PWFG_PROXY_SENTINEL" ]; then
+    escalate "LLM budget ceiling reached — the brokering proxy refused further requests" \
+      "$(head -1 "$PWFG_PROXY_SENTINEL" 2>/dev/null)" \
+      "This is NOT a crash and NOT a too-big phase — the dedicated key's cost cap is spent," \
+      "so recovery/retry cannot help and re-authoring the plan will not either." \
+      "ACTION (human): raise PWFG_PROXY_MAX_COST_USD (or stop the run), then clear the" \
+      "sentinel and restart the proxy." \
+      "  sentinel:    $PWFG_PROXY_SENTINEL" \
+      "  proxy audit: alongside the sentinel (audit.jsonl / ledger.json)" \
+      "stuck-phase: $(pwfg_remaining_ids | head -1)"
+    log "BUDGET CEILING (proxy) — human needed"; break
+  fi
 
   "$DIR/verify-all.sh" >"$sd/logs/_gate.txt" 2>&1; gate_rc=$?
   after_green="$(pwfg_green_ids | sort)"

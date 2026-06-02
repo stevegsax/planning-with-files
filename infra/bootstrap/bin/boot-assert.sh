@@ -44,8 +44,12 @@ else
   ok "agent env has no LLM credential"
 fi
 
-# 4. the agent must not read the brokered key credential.
-if [ -e "$KEY_CRED" ] && as_agent cat "$KEY_CRED" >/dev/null 2>&1; then
+# 4. the agent must not read the brokered key credential. The key MUST be present
+#    (delivered before this unit) — otherwise we cannot certify confidentiality, and
+#    a vacuous "ok" on a missing file would hide a mis-ordered/absent key delivery.
+if [ ! -e "$KEY_CRED" ]; then
+  no "key credential absent ($KEY_CRED) — deliver it before boot-assert; cannot certify the boundary"
+elif as_agent cat "$KEY_CRED" >/dev/null 2>&1; then
   no "agent can read the key credential ($KEY_CRED)"
 else
   ok "agent cannot read the key credential"

@@ -54,4 +54,13 @@ jobs:
           uv run --python 3.13 --with ruff ruff check .
 
       - name: OS boundary acceptance (creates throwaway users; needs root)
-        run: sudo -E bash tests/test_boundary.sh
+        # The boundary test self-skips when it cannot run (non-root / missing tools).
+        # In CI that would silently leave the agent-containment invariants UNVERIFIED,
+        # so fail the job if it skipped instead of actually asserting.
+        run: |
+          set -o pipefail
+          sudo -E bash tests/test_boundary.sh 2>&1 | tee /tmp/boundary.out
+          if grep -q '^SKIP' /tmp/boundary.out; then
+            echo "::error::boundary test SKIPPED in CI — agent-containment invariants were not verified"
+            exit 1
+          fi

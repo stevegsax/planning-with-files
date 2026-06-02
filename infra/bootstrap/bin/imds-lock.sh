@@ -7,10 +7,15 @@
 # owner-match DROP scoped to the agent uid keeps root/gov/proxy able to fetch
 # secrets at boot while the agent cannot. Idempotent; run as root.
 #
+# Durability across reboots is provided by re-running this script every boot via
+# pwfg-imds-lock.service (ordered before the proxy/loop/boot-assert) — NOT by
+# iptables-save, which is inert on AL2023 without an iptables-services restore unit.
+# PWFG_IMDS_PERSIST=1 still attempts a best-effort save where a backend exists.
+#
 # Env (with defaults):
 #   PWFG_AGENT_USER=agent             the unprivileged uid to fence off
 #   PWFG_IMDS_IP=169.254.169.254      the metadata endpoint
-#   PWFG_IMDS_PERSIST=1               1 = persist the ruleset (iptables-save)
+#   PWFG_IMDS_PERSIST=1               1 = also best-effort persist (iptables-save)
 set -euo pipefail
 
 AGENT_USER="${PWFG_AGENT_USER:-agent}"

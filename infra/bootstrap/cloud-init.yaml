@@ -17,6 +17,8 @@ runcmd:
   - /opt/pwfg/bootstrap/bin/bootstrap.sh
   - PWFG_AGENT_USER=agent /opt/pwfg/bootstrap/bin/imds-lock.sh
   - systemctl daemon-reload
+  # Re-applies the IMDS lock on every subsequent boot (the first boot applied it above).
+  - systemctl enable --now pwfg-imds-lock.service
   - systemctl enable --now pwfg-boot-assert.service
   - systemctl enable --now pwfg-proxy.service
   - systemctl enable --now pwfg-loop.service

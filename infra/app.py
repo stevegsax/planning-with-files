@@ -34,7 +34,9 @@ def build(app: App) -> None:
     _dummy_key = "00000000-0000-0000-0000-000000000000"
     cmk = ctx("cmk_arn") or f"arn:aws:kms:{region}:{account}:key/{_dummy_key}"
     audit = ctx("audit_log_group_arn") or f"arn:aws:logs:{region}:{account}:log-group:/pwfg/audit"
-    git_cidr = ctx("git_cidr") or "0.0.0.0/0"
+    # Egress FAILS CLOSED: with no -c git_cidr the SG gets no git egress rule at all
+    # (rather than 0.0.0.0/0). An explicit 0.0.0.0/0 is rejected in NetworkStack.
+    git_cidr = ctx("git_cidr") or ""
 
     net = NetworkStack(app, "PwfgNetwork", env=env, git_cidr=git_cidr)
     iam_stack = IamStack(
