@@ -12,8 +12,9 @@ WorkingDirectory=/srv/pwfg
 # All PWFG_* context for gov-run tools (and the sudo-invoked stop-gate/verify) is
 # sourced from this file via common.sh's PWFG_ENV_FILE hook.
 Environment=PWFG_ENV_FILE=/srv/pwfg/gov/env
-# Run the agent out of process as the unprivileged uid; honor the scaling budget.
-Environment=PWFG_LAUNCH_CMD=/srv/pwfg/bin/launch-agent.sh
+# Run the agent out of process AS the unprivileged uid: gov invokes launch-agent.sh
+# via the narrow gov->agent sudoers grant (the launcher then execs claude directly).
+Environment="PWFG_LAUNCH_CMD=sudo -u agent /srv/pwfg/bin/launch-agent.sh"
 Environment=PWFG_PROOF_AS=agent
 Environment=PWFG_STOP_AT_CHECKPOINT=1
 ExecStart=/srv/pwfg/skill/bin/run-loop.sh
