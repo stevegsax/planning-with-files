@@ -1,0 +1,69 @@
+# Off-box acceptance gate — the AUTHORITATIVE done-signal (Workstream D).
+#
+# This is a REFERENCE copy; in production it lives in the protected `pwfg-acceptance`
+# repo (which holds locked/ + skill/, read-only to the agent). It checks out the
+# acceptance suite AND the agent's throwaway `pwfg-impl` repo and runs verify-all.sh
+# off-box, where the agent cannot tamper with the gate. Exit 0 == the real GREEN.
+# Teardown / "complete" must key off THIS result, never on-box status; a
+# green-local / red-CI disagreement is itself a tamper or drift signal.
+#
+# The credential boundary IS GitHub's permission model: the agent's repo-scoped
+# token can push to pwfg-impl but cannot push to pwfg-acceptance (Trap 2 closed).
+
+name: acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      impl_repo:
+        description: "owner/name of the agent's impl repo"
+        required: true
+      impl_ref:
+        description: "ref/sha in the impl repo to gate"
+        required: false
+        default: "main"
+  # The impl repo signals a candidate via repository_dispatch (type: impl-candidate).
+  repository_dispatch:
+    types: [impl-candidate]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the acceptance suite (this repo — locked/ + skill/)
+        uses: actions/checkout@v4
+        with:
+          path: acceptance
+
+      - name: Check out the agent's impl repo (read-only)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.impl_repo || github.event.client_payload.impl_repo }}
+          ref: ${{ github.event.inputs.impl_ref || github.event.client_payload.impl_ref || 'main' }}
+          token: ${{ secrets.IMPL_READ_TOKEN }}
+          path: impl
+
+      - name: Install tooling (uv, jq)
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          sudo apt-get update -y && sudo apt-get install -y jq
+
+      - name: Run the aggregate gate OFF-BOX (every phase incl. the sealed check)
+        env:
+          # The plan + tests come ONLY from the protected acceptance repo; the
+          # workspace under test is the agent's impl checkout. Choose the example /
+          # spec via EXAMPLE (toy|ledger) or point PWFG_PLAN at your real locked plan.
+          EXAMPLE: ${{ vars.PWFG_EXAMPLE || 'ledger' }}
+        run: |
+          set -euo pipefail
+          export PWFG_PLAN="$PWD/acceptance/examples/$EXAMPLE/locked/plan.json"
+          export PWFG_SCHEMA="$PWD/acceptance/skill/schema/plan.schema.json"
+          export PWFG_WORKSPACE="$PWD/impl/examples/$EXAMPLE/workspace"
+          export PWFG_STATE_DIR="$PWD/ci-state"
+          mkdir -p "$PWFG_STATE_DIR"
+          bash acceptance/skill/bin/verify-all.sh
+          echo "ACCEPTANCE GREEN — authoritative done-signal"

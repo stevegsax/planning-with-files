@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sudo -u gov /srv/pwfg/skill/bin/stop-gate.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

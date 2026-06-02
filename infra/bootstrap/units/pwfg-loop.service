@@ -1,0 +1,31 @@
+[Unit]
+Description=pwfg autonomous loop (gov drives bounded claude sessions to a green gate)
+After=pwfg-proxy.service pwfg-boot-assert.service
+Requires=pwfg-proxy.service
+# A failed boundary assertion must stop the loop from ever starting.
+Requires=pwfg-boot-assert.service
+
+[Service]
+User=gov
+Group=pwfg
+WorkingDirectory=/srv/pwfg
+# All PWFG_* context for gov-run tools (and the sudo-invoked stop-gate/verify) is
+# sourced from this file via common.sh's PWFG_ENV_FILE hook.
+Environment=PWFG_ENV_FILE=/srv/pwfg/gov/env
+# Run the agent out of process as the unprivileged uid; honor the scaling budget.
+Environment=PWFG_LAUNCH_CMD=/srv/pwfg/bin/launch-agent.sh
+Environment=PWFG_PROOF_AS=agent
+Environment=PWFG_STOP_AT_CHECKPOINT=1
+ExecStart=/srv/pwfg/skill/bin/run-loop.sh
+# Bounded: the loop's own PWFG_MAX_SESSIONS is the real backstop; a crash restart is
+# rare and capped so a wedged box does not bill forever.
+Restart=on-failure
+RestartSec=10
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+NoNewPrivileges=no
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

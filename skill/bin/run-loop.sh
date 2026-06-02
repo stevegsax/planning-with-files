@@ -63,10 +63,13 @@ escalate() { { printf 'reason: %s\n' "$1"; printf 'at: %s\n' "$(now)"; shift; fo
 
 launch() {  # $1 = prompt, $2 = max-turns -> prints session JSON ({.subtype: ...})
   if [ -n "${PWFG_LAUNCH_CMD:-}" ]; then
+    # Expose BOTH the prompt and the computed (progress-scaled) turn budget to the
+    # custom launcher, so an out-of-process launcher (e.g. the box's sudo->agent
+    # claude wrapper) can honor the same budget the default path uses.
     if [ -n "$TIMEOUT_BIN" ]; then
-      PWFG_PROMPT="$1" "$TIMEOUT_BIN" -k 5 "$PWFG_SESSION_TIMEOUT" bash -c "$PWFG_LAUNCH_CMD"
+      PWFG_PROMPT="$1" PWFG_MAX_TURNS="$2" "$TIMEOUT_BIN" -k 5 "$PWFG_SESSION_TIMEOUT" bash -c "$PWFG_LAUNCH_CMD"
     else
-      PWFG_PROMPT="$1" bash -c "$PWFG_LAUNCH_CMD"
+      PWFG_PROMPT="$1" PWFG_MAX_TURNS="$2" bash -c "$PWFG_LAUNCH_CMD"
     fi
   else
     if [ -n "$TIMEOUT_BIN" ]; then

@@ -1,0 +1,18 @@
+# pwfg boundary sudo rules. Two crossings only:
+#   gov -> agent : spawn the unprivileged worker (the launch seam)
+#   agent -> gov : the NARROW verify bridge (safe because proof strings come only
+#                  from the locked plan — TRAP 1 is closed in common.sh)
+# Keep PWFG_* context across the boundary so common.sh's PWFG_ENV_FILE hook and the
+# proof-as-agent setting survive sudo's env reset.
+
+Defaults:gov   env_keep += "PWFG_PROMPT PWFG_MAX_TURNS PWFG_MODEL PWFG_PROXY_PORT"
+Defaults:agent env_keep += "PWFG_ENV_FILE PWFG_PROOF_AS"
+
+# gov launches the agent's claude session.
+gov   ALL=(agent) NOPASSWD: /srv/pwfg/bin/launch-agent.sh
+
+# The agent reaches the verifier ONLY through these gov-owned scripts.
+agent ALL=(gov) NOPASSWD: /srv/pwfg/skill/bin/verify-task.sh, /srv/pwfg/skill/bin/verify-all.sh, /srv/pwfg/skill/bin/escalate.sh
+
+# The agent's Stop hook runs as gov so it can read/write the gov-only state dir.
+agent ALL=(gov) NOPASSWD: /srv/pwfg/skill/bin/stop-gate.sh

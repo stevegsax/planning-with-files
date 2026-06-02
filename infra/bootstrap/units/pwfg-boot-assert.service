@@ -1,0 +1,17 @@
+[Unit]
+Description=pwfg boundary assertions (fails the boot if the agent is not contained)
+After=network-online.target
+# Ordered before the loop; its Requires= on this unit means a failed assertion
+# prevents the agent loop from ever starting.
+Before=pwfg-loop.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PWFG_SRV=/srv/pwfg
+Environment=PWFG_AGENT_USER=agent
+Environment=PWFG_KEY_CRED=/run/pwfg/anthropic_key
+ExecStart=/srv/pwfg/bin/boot-assert.sh
+
+[Install]
+WantedBy=multi-user.target

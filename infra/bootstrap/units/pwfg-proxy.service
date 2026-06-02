@@ -1,0 +1,40 @@
+[Unit]
+Description=pwfg LLM brokering proxy (hides the Anthropic key, caps cost, audits)
+After=network-online.target
+Wants=network-online.target
+# The loop must not start until the proxy the agent talks to is up.
+Before=pwfg-loop.service
+
+[Service]
+User=proxy
+Group=pwfgkey
+WorkingDirectory=/srv/pwfg
+# The real key arrives via the kernel keyring, NOT the environment or /proc.
+# Provision the SecureString to this path out of band (see P1-provisioning.md).
+LoadCredential=anthropic_key:/run/pwfg/anthropic_key
+Environment=PWFG_PROXY_HOST=127.0.0.1
+Environment=PWFG_PROXY_PORT=8787
+Environment=PWFG_PROXY_STATE=/srv/pwfg/proxy
+Environment=PWFG_CONTROL_DIR=/srv/pwfg/control
+Environment=PWFG_PROXY_UPSTREAM=https://api.anthropic.com
+# Hard ceiling — the authoritative cost cap. Tune per run.
+Environment=PWFG_PROXY_MAX_COST_USD=25.00
+ExecStart=/usr/bin/uv run --python 3.13 --with starlette --with httpx --with uvicorn python -m proxy.app
+WorkingDirectory=/srv/pwfg/proxy-src
+Restart=on-failure
+RestartSec=2
+
+# Hardening: no core dumps (key in memory), no new privileges, private tmp,
+# read-only system, write only the proxy state + control dirs.
+LimitCORE=0
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/srv/pwfg/proxy /srv/pwfg/control
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
