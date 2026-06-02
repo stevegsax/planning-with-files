@@ -130,14 +130,21 @@ pwfg_run_proof() {
   [ -n "$proof" ] || pwfg_die "phase has no proof command: $id"
   workdir="$(pwfg_workdir)" || exit 1
   log="$(pwfg_state_dir)/logs/$id.txt"
-  # Optional hardening (the box sets PWFG_PROOF_AS=agent): drop the proof to the
-  # agent uid so the agent's code — which a pytest proof IMPORTS into the test
-  # process — never executes as the privileged `gov` user. The proof STRING still
-  # comes only from the locked plan (closes TRAP 1 regardless of who runs it), and
-  # the log fd is opened here by the caller (gov) so the agent inherits a write
-  # handle without owning the gov-owned state dir. Empty PWFG_PROOF_AS (laptop/CI)
-  # == today's behavior, so the test suites are unchanged.
-  ( cd "$workdir" && ${PWFG_PROOF_AS:+sudo -u "$PWFG_PROOF_AS"} bash -c "$proof" ) >"$log" 2>&1
+  # Optional hardening (the box sets PWFG_PROOF_AS=agent): drop the proof to the agent
+  # uid so the agent's code — which a pytest proof IMPORTS into the test process —
+  # never executes as the privileged `gov` user. We dispatch through a FIXED gov-owned
+  # wrapper (run-proof-as.sh) that re-reads the proof from the locked plan, NOT a raw
+  # `sudo -u agent bash -c "$proof"`, so the sudoers grant is just that one script
+  # rather than an arbitrary `bash` as the agent uid (least privilege; TRAP 1 stays
+  # closed by construction). The log fd is opened here by the caller (gov), so the
+  # wrapper inherits a write handle without owning the gov-owned state dir. Empty
+  # PWFG_PROOF_AS (laptop/CI) == today's in-process behavior, so the suites are unchanged.
+  if [ -n "${PWFG_PROOF_AS:-}" ]; then
+    local bin; bin="$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)"
+    sudo -u "$PWFG_PROOF_AS" "$bin/run-proof-as.sh" "$id" >"$log" 2>&1
+  else
+    ( cd "$workdir" && bash -c "$proof" ) >"$log" 2>&1
+  fi
 }
 
 # ---- derived-status cache (advisory, agent-writable; the authoritative gate
