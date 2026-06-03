@@ -104,14 +104,20 @@ Confirm the **negative** assertions hold (the boot fails otherwise):
 `systemctl status pwfg-boot-assert` must be active (success). The same matrix is
 proven locally by `sudo bash tests/test_boundary.sh`.
 
-## 3. Tooling + pre-baked uv cache
+## 3. Tooling + offline uv cache (Path A: prime-then-fence)
 
-Install `claude`, `uv` (py3.13), `jq`, `git`, coreutils `timeout`. Prime the uv
-cache for the locked plan's proof commands (pytest/hypothesis/CPython-3.13) and run
-proofs with `UV_OFFLINE=1`, so PyPI stays off the egress allowlist entirely. If a
-phase needs an unprimed dep, prefer **re-priming the cache** — only as a last resort
-add `pypi.org` / `files.pythonhosted.org` to the Squid allowlist (§3b), and never to
-the agent's reach.
+For the first watchable test, the toolchain (`claude`, `uv`, `jq`, `git`, coreutils
+`timeout`, `curl`, `tmux`) and an offline `uv` cache (proof deps + a managed CPython
+3.13) are installed/primed on the box by **`pwfg-prime.service`** while the Squid
+allowlist is *temporarily broadened* (the TEST-1 block in `squid-cloud-init.yaml` /
+`squid-test1-priming.conf.snippet`), then the box is **re-fenced** to `api.anthropic.com`
+only and the agent runs offline against the primed cache (`run-proof-as.sh` sets
+`UV_OFFLINE=1` + the cache/python dirs when the loop sets `PWFG_UV_OFFLINE`). The cache
+is **agent-writable** (uv writes lock/ephemeral-env files at run time); the managed
+CPython is gov-RO. The full linear walkthrough — deploy → prime → re-fence → watch →
+teardown, with the corrected allowlist and the on-box validation list — is in
+**`docs/P1-first-test.md`**. PyPI/dnf hosts stay OFF the steady-state allowlist; a forgotten-open
+broadening is the dominant risk (re-verify with `curl -x http://<squid-ip>:3128 https://pypi.org` → 403).
 
 ## 3b. Egress: the Squid forward proxy (PwfgEgress)
 
@@ -174,9 +180,10 @@ domain allowlist, not just connectivity.
 
 ## 5. Boundary end-to-end + the Stop-hook empirical check
 
-Select the example for the run (`locked/` for `toy` or `ledger`) into
-`/srv/pwfg/locked` and set `PWFG_PLAN` in `/srv/pwfg/gov/env`. Let the loop drive a
-session and confirm:
+`pwfg-prime.service` (`select-example.sh`) places `examples/$PWFG_EXAMPLE/{locked,workspace}`
+under `/srv/pwfg` at boot (default `toy`; `PWFG_PLAN` is example-independent). Let the
+loop drive a session — **watch it** via `docs/P1-first-test.md §7** (SSM +
+`watch.sh attach` read-only / `journalctl -fu pwfg-loop`) — and confirm:
 
 - **REQUIRED negative test (plan risk #3)** via **`skill/bin/smoke-stop-hook.sh`**: as
   the agent, edit a workspace `.claude/settings.json` (and the `CLAUDE_CONFIG_DIR`

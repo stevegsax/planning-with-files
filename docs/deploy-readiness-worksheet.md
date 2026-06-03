@@ -12,11 +12,12 @@ operator steps. Confirm each is closed (or consciously waived) before you start:
 
 - [ ] **Code delivery** — a mechanism places `/opt/pwfg` (skill/proxy/bootstrap + the
       chosen example) on the isolated box at first boot. (Keystone decision — §B.)
-- [ ] **Runtime toolchain** — `claude`(+node), `uv`, `jq`, `git`, coreutils `timeout`,
-      `curl` are installed on the box (the isolated subnet cannot fetch them at boot).
-- [ ] **Offline uv cache** — a primed `UV_CACHE_DIR` (proxy deps + proof deps + a uv-managed
-      CPython 3.13) plus `UV_OFFLINE=1` / `UV_PYTHON_DOWNLOADS=never` so no proof/proxy
-      `uv run` ever reaches PyPI.
+- [x] **Runtime toolchain** — installed by `pwfg-prime.service` (Path A) while the Squid
+      allowlist is temporarily broadened: `claude`, `uv`, `jq`, `git`, `timeout`, `curl`, `tmux`.
+- [x] **Offline uv cache** — primed by `pwfg-prime.service` into an **agent-writable**
+      `UV_CACHE_DIR` (+ a gov-RO managed CPython 3.13); `run-proof-as.sh` sets
+      `UV_OFFLINE=1` / `UV_PYTHON_DOWNLOADS=never` when the loop sets `PWFG_UV_OFFLINE`.
+      (Validate the offline cache-hit on the first box — see `P1-first-test.md`.)
 - [ ] **Key delivery** — `pwfg-key-fetch.service` writes `/run/pwfg/anthropic_key`
       (root `0400`) from SSM before the proxy + boot-assert. (Shipped — verify enabled.)
 - [ ] **Proxy → Squid wiring** — `PWFG_PROXY_FORWARD` carries the real Squid IP (not the
@@ -83,8 +84,12 @@ for the exact `aws` commands.
       agent edits its own settings to drop the Stop hook, a session ends RED, the loop
       STILL gates. If it does not, fix `launch-agent.sh` (`CLAUDE_CONFIG_DIR` /
       `--setting-sources`) before trusting the boundary.
-- [ ] **Offline proof** — `sudo -u agent /srv/pwfg/skill/bin/run-proof-as.sh <first-phase>`
-      passes with networking effectively down (validates the primed uv cache).
+- [ ] **Offline proof** — `sudo -u agent env PWFG_UV_OFFLINE=1 \
+      PWFG_UV_CACHE_DIR=/srv/pwfg/uv/cache PWFG_UV_PYTHON_DIR=/srv/pwfg/uv/python \
+      /srv/pwfg/skill/bin/run-proof-as.sh <first-phase>` passes with the fence in force
+      (validates the primed uv cache + the agent-writable/cache-key invariant).
+- [ ] **tmux watch** — `sudo -u gov tmux -S /srv/pwfg/control/tmux.sock ls` shows the
+      `pwfg` session; `watch.sh attach` is read-only; `journalctl -fu pwfg-loop` streams.
 
 ## F. Teardown order (release the cross-stack export + sole egress correctly)
 

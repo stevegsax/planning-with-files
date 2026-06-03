@@ -25,6 +25,9 @@ runcmd:
   # Fetch the brokered key to /run/pwfg BEFORE boot-assert (which fails the boot if it
   # is absent) and the proxy (which LoadCredential=s it).
   - systemctl enable --now pwfg-key-fetch.service
+  # TEST-1 prime-then-fence: install the toolchain + prime the offline uv cache + place
+  # the example BEFORE boot-assert (so it asserts a real plan) and the loop.
+  - systemctl enable --now pwfg-prime.service
   - systemctl enable --now pwfg-boot-assert.service
   - systemctl enable --now pwfg-proxy.service
   - systemctl enable --now pwfg-loop.service

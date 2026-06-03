@@ -31,19 +31,26 @@ install -d -o agent -g pwfg    -m 2770 "$SRV/workspace"
 install -d -o proxy -g pwfgkey -m 0750 "$SRV/proxy"
 install -d -o gov   -g pwfgkey -m 0750 "$SRV/control"
 install -d -o agent -g pwfg    -m 2770 "$SRV/workspace/.agent-claude"
+# Path A offline-uv trees: the managed CPython is gov-owned, agent-RO via the pwfg
+# group (read+exec only); the wheel cache is AGENT-owned because uv writes lock /
+# ephemeral-env files into it at run time. A non-primed box thus fails closed (empty
+# cache) rather than letting the agent own the wrong tree.
+install -d -o gov   -g pwfg    -m 0750 "$SRV/uv" "$SRV/uv/python"
+install -d -o agent -g pwfg    -m 2770 "$SRV/uv/cache"
 
 # --- deploy code (gov-owned, agent-RO via group) ---
 if [ -d "$SRC/skill" ]; then
   cp -a "$SRC/skill/."  "$SRV/skill/"
   cp -a "$SRC/proxy/."  "$SRV/proxy-src/" 2>/dev/null || true
-  # locked/ for the chosen example is selected out of band; see P1-provisioning.md.
+  # locked/ + workspace/ for PWFG_EXAMPLE are populated by pwfg-prime.service
+  # (select-example.sh), not here — the example is a per-run choice.
   chown -R gov:pwfg "$SRV/skill"
   chmod -R o-rwx "$SRV/skill"
 fi
 
 # Deploy the infra helper scripts (launch-agent/imds-lock/boot-assert) to a stable,
 # gov-readable path referenced by the units.
-for s in launch-agent imds-lock egress-lock boot-assert fetch-key; do
+for s in launch-agent imds-lock egress-lock boot-assert fetch-key prime prime-uv select-example loop-tmux; do
   install -o root -g pwfg -m 0755 "$SRC/infra/bootstrap/bin/$s.sh" "$SRV/bin/$s.sh"
 done
 
@@ -58,7 +65,7 @@ install -o root -g root -m 0440 "$SRC/infra/bootstrap/sudoers.d/pwfg" /etc/sudoe
 visudo -cf /etc/sudoers.d/pwfg
 
 # --- systemd units ---
-for u in pwfg-imds-lock pwfg-egress-lock pwfg-key-fetch pwfg-proxy pwfg-loop pwfg-boot-assert; do
+for u in pwfg-imds-lock pwfg-egress-lock pwfg-key-fetch pwfg-prime pwfg-proxy pwfg-loop pwfg-boot-assert; do
   install -o root -g root -m 0644 "$SRC/infra/bootstrap/units/$u.service" "/etc/systemd/system/$u.service"
 done
 
