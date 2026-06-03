@@ -20,6 +20,21 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$DIR/../lib/common.sh"
 pwfg_need jq
 
+# Offline-uv (Path A / TEST-1): when gov sets PWFG_UV_OFFLINE (the pwfg-loop unit), point
+# the proof's `uv run` at the box's PRIMED, agent-writable cache + the gov-RO managed
+# CPython, and forbid any network/python download — so a fenced agent's proof is a pure
+# cache hit. Set HERE (not gov/env, not profile.d, not a broad env_keep): this fixed
+# gov-owned wrapper always runs as the agent in the proof's own process after
+# `sudo -u agent` resets the env; gov/env is refused when sourced as the agent
+# (owner != euid), and profile.d is not read for a nologin non-interactive sudo. A no-op
+# off-box / in CI / in the boundary test, whose sudoers never sets PWFG_UV_OFFLINE.
+if [ -n "${PWFG_UV_OFFLINE:-}" ]; then
+  export UV_CACHE_DIR="${PWFG_UV_CACHE_DIR:-/srv/pwfg/uv/cache}"
+  export UV_PYTHON_INSTALL_DIR="${PWFG_UV_PYTHON_DIR:-/srv/pwfg/uv/python}"
+  export UV_OFFLINE=1
+  export UV_PYTHON_DOWNLOADS=never
+fi
+
 id="${1:-}"
 [ -n "$id" ] || pwfg_die "usage: run-proof-as.sh <phase-id>"
 pwfg_phase_exists "$id" || pwfg_die "unknown phase: $id"

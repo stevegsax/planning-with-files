@@ -1,9 +1,11 @@
 [Unit]
 Description=pwfg autonomous loop (gov drives bounded claude sessions to a green gate)
-After=pwfg-proxy.service pwfg-boot-assert.service
+After=pwfg-proxy.service pwfg-boot-assert.service pwfg-prime.service
 Requires=pwfg-proxy.service
 # A failed boundary assertion must stop the loop from ever starting.
 Requires=pwfg-boot-assert.service
+# The loop needs the primed offline uv cache + the placed example (Path A).
+Requires=pwfg-prime.service
 
 [Service]
 User=gov
@@ -17,7 +19,15 @@ Environment=PWFG_ENV_FILE=/srv/pwfg/gov/env
 Environment="PWFG_LAUNCH_CMD=sudo -u agent /srv/pwfg/bin/launch-agent.sh"
 Environment=PWFG_PROOF_AS=agent
 Environment=PWFG_STOP_AT_CHECKPOINT=1
-ExecStart=/srv/pwfg/skill/bin/run-loop.sh
+# Path A offline-uv: proofs (run as agent via run-proof-as.sh) use the box's primed,
+# agent-writable cache + the gov-RO managed CPython, with no network/python downloads.
+Environment=PWFG_UV_OFFLINE=1
+Environment=PWFG_UV_CACHE_DIR=/srv/pwfg/uv/cache
+Environment=PWFG_UV_PYTHON_DIR=/srv/pwfg/uv/python
+# Run the loop under tmux so an operator can attach READ-ONLY over SSM and watch.
+Environment=PWFG_SRV=/srv/pwfg
+Environment=PWFG_TMUX_SOCK=/srv/pwfg/control/tmux.sock
+ExecStart=/srv/pwfg/bin/loop-tmux.sh
 # Bounded: the loop's own PWFG_MAX_SESSIONS is the real backstop; a crash restart is
 # rare and capped so a wedged box does not bill forever.
 Restart=on-failure

@@ -9,8 +9,11 @@
 # uid runs the proof and must come from the gov-owned env file, never the agent.
 
 # PWFG_PLAN is kept gov->agent so the proof wrapper (run as agent) reads the proof
-# from the locked plan; the value is gov's, the agent never sets it.
-Defaults:gov   env_keep += "PWFG_PROMPT PWFG_MAX_TURNS PWFG_MODEL PWFG_PROXY_PORT PWFG_PLAN"
+# from the locked plan; the value is gov's, the agent never sets it. The PWFG_UV_*
+# vars (Path A offline-uv) are likewise gov-SET (the pwfg-loop unit) and must survive
+# `sudo -u agent run-proof-as.sh`; the agent's own UV_* never survive (env reset) and
+# the agent is not the sudo caller, so it can never redirect the cache.
+Defaults:gov   env_keep += "PWFG_PROMPT PWFG_MAX_TURNS PWFG_MODEL PWFG_PROXY_PORT PWFG_PLAN PWFG_UV_OFFLINE PWFG_UV_CACHE_DIR PWFG_UV_PYTHON_DIR"
 Defaults:agent env_keep += "PWFG_ENV_FILE"
 
 # gov launches the agent's claude session, and runs each phase's proof as the agent
@@ -23,3 +26,10 @@ agent ALL=(gov) NOPASSWD: /srv/pwfg/skill/bin/verify-task.sh, /srv/pwfg/skill/bi
 
 # The agent's Stop hook runs as gov so it can read/write the gov-only state dir.
 agent ALL=(gov) NOPASSWD: /srv/pwfg/skill/bin/stop-gate.sh
+
+# Read-only watch crossing (Path A): the SSM operator reviews the run via watch.sh,
+# whose attach path hardcodes `tmux attach -r`, so even through sudo the operator can
+# neither inject input nor kill the loop — distinct from the boundary crossings above.
+# NOTE (first-real-box): the SSM default user is ssm-user in most accounts; if your
+# Session Manager Run-As is ec2-user, change the principal accordingly.
+ssm-user ALL=(gov) NOPASSWD: /srv/pwfg/skill/bin/watch.sh

@@ -21,20 +21,34 @@ write_files:
       # This is the default PRIVATE_ISOLATED /24; adjust if you re-CIDR the subnet.
       acl pwfg_src src 10.0.0.0/24
 
+      # === TEST-1 PRIMING BROADENING (default OFF — steady state is anthropic-only) ===
+      # To prime the agent box once (install toolchain + warm the offline uv cache),
+      # UNCOMMENT these acls AND the matching `http_access allow` lines below on the
+      # RUNNING Squid box, `systemctl reload squid`, prime, then RE-COMMENT both + reload
+      # to re-fence. See squid-test1-priming.conf.snippet for the paste-in + re-verify.
+      # Substitute your DEPLOY REGION into al2023. boot-assert does NOT check this — a
+      # forgotten-open broadening is the real risk, so re-fence + re-verify
+      # (curl -x http://127.0.0.1:3128 https://pypi.org -> 403) before the run.
+      #acl uv_install     dstdomain astral.sh releases.astral.sh
+      #acl gh             dstdomain github.com objects.githubusercontent.com release-assets.githubusercontent.com
+      #acl pypi           dstdomain pypi.org files.pythonhosted.org
+      #acl al2023         dstdomain al2023-repos-<region>-de612dc2.s3.<region>.amazonaws.com al2023-repos-<region>-de612dc2.s3.dualstack.<region>.amazonaws.com
+      #acl claude_install dstdomain claude.ai downloads.claude.ai
+
       # Permit ONLY CONNECT (no plain HTTP forward-proxying), only to 443, only from
       # the in-VPC source, only to the allowlisted host. Everything else is denied.
       http_access deny !CONNECT
       http_access deny CONNECT !SSL_ports
       http_access deny !pwfg_src
       http_access allow pwfg_src CONNECT anthropic SSL_ports
+      # TEST-1 allows — uncomment WITH the acls above (these sit ABOVE `deny all` so they
+      # take effect); re-comment to re-fence.
+      #http_access allow pwfg_src CONNECT uv_install SSL_ports
+      #http_access allow pwfg_src CONNECT gh SSL_ports
+      #http_access allow pwfg_src CONNECT pypi SSL_ports
+      #http_access allow pwfg_src CONNECT al2023 SSL_ports
+      #http_access allow pwfg_src CONNECT claude_install SSL_ports
       http_access deny all
-
-      # Escape hatches (DISABLED by default — keep the surface minimal):
-      #   on-box gov-run git over HTTPS:  acl githost dstdomain github.com
-      #                                   http_access allow pwfg_src CONNECT githost SSL_ports
-      #   unprimed PyPI dep (a smell — prefer re-priming the uv cache, UV_OFFLINE=1):
-      #                                   acl pypi dstdomain pypi.org files.pythonhosted.org
-      #                                   http_access allow pwfg_src CONNECT pypi SSL_ports
 
       http_port 3128
       # We only tunnel CONNECT; there is nothing to cache.

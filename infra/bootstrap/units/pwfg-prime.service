@@ -1,0 +1,24 @@
+[Unit]
+Description=pwfg TEST-1 prime-then-fence (install toolchain + prime offline uv cache + place example)
+# Runs as ROOT (unaffected by egress-lock — that owner-match fences the agent uid only).
+# Priming needs SETUP-TIME egress through Squid, so it runs after the network/locks/key
+# are up, and BEFORE boot-assert (so boot-assert tests a REAL /srv/pwfg/locked/plan.json)
+# and the loop (which Requires this). The Squid allowlist must be opened for priming and
+# RE-FENCED afterwards on the SEPARATE Squid box (over SSM) — this unit does not touch it.
+After=network-online.target pwfg-imds-lock.service pwfg-egress-lock.service pwfg-key-fetch.service
+Before=pwfg-boot-assert.service pwfg-loop.service
+Wants=network-online.target
+ConditionPathExists=/opt/pwfg/repo/examples
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PWFG_SRC=/opt/pwfg/repo
+Environment=PWFG_SRV=/srv/pwfg
+Environment=PWFG_EXAMPLE=toy
+# SQUID_IP (+ VPC_CIDR) are delivered out of band via a drop-in, like the proxy's
+# forward.conf: the PwfgEgress SquidPrivateIp. prime.sh fails closed if SQUID_IP is unset.
+ExecStart=/srv/pwfg/bin/prime.sh
+
+[Install]
+WantedBy=multi-user.target
