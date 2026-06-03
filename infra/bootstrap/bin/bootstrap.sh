@@ -43,7 +43,7 @@ fi
 
 # Deploy the infra helper scripts (launch-agent/imds-lock/boot-assert) to a stable,
 # gov-readable path referenced by the units.
-for s in launch-agent imds-lock egress-lock boot-assert; do
+for s in launch-agent imds-lock egress-lock boot-assert fetch-key; do
   install -o root -g pwfg -m 0755 "$SRC/infra/bootstrap/bin/$s.sh" "$SRV/bin/$s.sh"
 done
 
@@ -58,7 +58,7 @@ install -o root -g root -m 0440 "$SRC/infra/bootstrap/sudoers.d/pwfg" /etc/sudoe
 visudo -cf /etc/sudoers.d/pwfg
 
 # --- systemd units ---
-for u in pwfg-imds-lock pwfg-egress-lock pwfg-proxy pwfg-loop pwfg-boot-assert; do
+for u in pwfg-imds-lock pwfg-egress-lock pwfg-key-fetch pwfg-proxy pwfg-loop pwfg-boot-assert; do
   install -o root -g root -m 0644 "$SRC/infra/bootstrap/units/$u.service" "/etc/systemd/system/$u.service"
 done
 
