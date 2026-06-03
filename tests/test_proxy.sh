@@ -56,7 +56,7 @@ PWFG_PROXY_STATE="$TMP/state" \
 PWFG_CONTROL_DIR="$TMP/control" \
 PWFG_PROXY_HOST=127.0.0.1 PWFG_PROXY_PORT="$PPORT" \
 PWFG_PROXY_MAX_COST_USD="0.005" \
-  uv run --python 3.13 --with starlette --with httpx --with uvicorn \
+  uv run --python 3.13 --with starlette --with 'httpx>=0.28,<1' --with uvicorn \
   python -m proxy.app >"$PLOG" 2>&1 &
 ppid=$!
 wait_port "$PPORT" || { no "proxy did not start"; cat "$PLOG"; echo "== $PASS passed, $((FAIL+1)) failed =="; exit 1; }
@@ -111,6 +111,26 @@ echo "== kill switch fires =="
 curl -s -o "$TMP/body3" "http://127.0.0.1:$PPORT/v1/messages" --data "$REQ" -H "content-type: application/json"
 grep -qi "kill" "$TMP/body3" 2>/dev/null && ok "kill switch refuses with a kill message" || no "kill switch refuses with a kill message"
 rm -f "$TMP/control/KILL"
+
+echo "== forward-proxy chaining wiring (PWFG_PROXY_FORWARD) =="
+# All assertions above ran with PWFG_PROXY_FORWARD UNSET, so the default (direct-to-
+# upstream) path is proven byte-identical. Here, prove the seam itself: config_from_env
+# surfaces None when unset and the Squid URL when set (the Broker passes it to
+# httpx.AsyncClient(proxy=...) so the upstream is CONNECT-tunneled through Squid).
+cfg_check="$(env -u PWFG_PROXY_FORWARD uv run --python 3.13 \
+  --with starlette --with 'httpx>=0.28,<1' --with uvicorn python - <<'PY'
+import os
+os.environ["PWFG_PROXY_AUTOSTART"] = "0"  # don't build the module-level app on import
+from proxy.app import config_from_env
+
+assert config_from_env().forward_proxy is None, "forward_proxy must be None when unset"
+os.environ["PWFG_PROXY_FORWARD"] = "http://10.0.250.5:3128"
+assert config_from_env().forward_proxy == "http://10.0.250.5:3128", "forward_proxy must read the env URL"
+print("OK")
+PY
+)"
+[ "$cfg_check" = "OK" ] && ok "config_from_env surfaces forward_proxy (None unset / URL set)" \
+  || no "config_from_env forward_proxy wiring (got '$cfg_check')"
 
 echo
 echo "== $PASS passed, $FAIL failed =="

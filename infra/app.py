@@ -15,6 +15,7 @@ from aws_cdk import App, Environment
 
 from aspects import apply_security_aspects
 from stacks.agent_host_stack import AgentHostStack
+from stacks.egress_stack import EgressStack
 from stacks.iam_stack import IamStack
 from stacks.network_stack import NetworkStack
 
@@ -57,7 +58,20 @@ def build(app: App) -> None:
         role=iam_stack.role,
         cloud_init_path=BOOTSTRAP / "cloud-init.yaml",
     )
+    # The box's only internet path: a domain-allowlist Squid forward proxy on a
+    # separate public subnet. Attaches the IGW/public-subnet to the EXISTING VPC as
+    # raw L1 so PwfgNetwork stays IGW/NAT-free; the agent-host SG gains exactly one
+    # egress (3128 -> the Squid SG, a standalone SG-referenced rule), never 0.0.0.0/0.
+    EgressStack(
+        app,
+        "PwfgEgress",
+        env=env,
+        vpc=net.vpc,
+        instance_sg=net.instance_sg,
+        squid_cloud_init_path=BOOTSTRAP / "squid-cloud-init.yaml",
+    )
 
+    # Aspects LAST so the IMDS hop-limit + cdk-nag also cover the Squid launch template.
     apply_security_aspects(app)
 
 

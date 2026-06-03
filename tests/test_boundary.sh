@@ -36,10 +36,16 @@ G1=pwfgshare      # {agent, gov}  -> agent-RO shared paths (locked/, gov setting
 G2=pwfgkey        # {gov, proxy}  -> gov reads audit/ledger; agent excluded
 SRV=""; SUDOERS=""; IMDS_IP="169.254.169.254"
 made_users=0
+EGRESS_PROBE_PID=""; EGRESS_NS=""; EGRESS_PROBE_URL=""
 
 cleanup() {
   iptables -D OUTPUT -d "$IMDS_IP" -m owner --uid-owner "$AG" -j DROP 2>/dev/null
   iptables -D OUTPUT -o lo -p tcp --dport 18254 -m owner --uid-owner "$AG" -j REJECT 2>/dev/null
+  iptables -D OUTPUT -d 127.0.0.0/8 -m owner --uid-owner "$AG" -j ACCEPT 2>/dev/null
+  iptables -D OUTPUT -m owner --uid-owner "$AG" -j DROP 2>/dev/null
+  [ -n "$EGRESS_PROBE_PID" ] && { kill "$EGRESS_PROBE_PID" 2>/dev/null; wait "$EGRESS_PROBE_PID" 2>/dev/null; }
+  [ -n "$EGRESS_NS" ] && ip netns del "$EGRESS_NS" 2>/dev/null
+  ip link del veth-pwfgh 2>/dev/null
   [ -n "$SUDOERS" ] && rm -f "$SUDOERS"
   if [ "$made_users" -eq 1 ]; then
     userdel "$AG" 2>/dev/null; userdel "$GV" 2>/dev/null; userdel "$PX" 2>/dev/null
@@ -167,10 +173,6 @@ else
   no "imds-lock.sh ran"
 fi
 
-echo "== boot-assert.sh passes against the in-force layout =="
-allow "boot-assert reports the boundary in force" \
-      env PWFG_SRV="$SRV" PWFG_AGENT_USER="$AG" PWFG_IMDS_IP="$IMDS_IP" PWFG_KEY_CRED="$SRV/proxy/key" "$BOOT/boot-assert.sh"
-
 echo "== END-TO-END: gov drives the loop across the uid boundary -> GREEN =="
 # The fake-agent worker runs AS the agent uid (umask 002 so gov can later manage the
 # files), proving gov spawns agent, agent writes the workspace, and gov's gate reads
@@ -245,6 +247,75 @@ grep -q "WHOAMI=$AG" "$STUB_OUT" 2>/dev/null && ok "claude ran AS the agent uid"
 grep -q "BASE_URL=http://127.0.0.1:8787" "$STUB_OUT" 2>/dev/null && ok "ANTHROPIC_BASE_URL points at the proxy" || no "ANTHROPIC_BASE_URL points at the proxy"
 grep -q "OAUTH=<unset>" "$STUB_OUT" 2>/dev/null && ok "no CLAUDE_CODE_OAUTH_TOKEN in the agent env" || no "no CLAUDE_CODE_OAUTH_TOKEN in the agent env"
 grep -q -- "--settings $SRV/gov/settings.json" "$STUB_OUT" 2>/dev/null && ok "carries the gov-owned Stop-hook --settings" || no "carries the gov-owned --settings"
+
+# EGRESS + the final boot-assert run LAST: the catch-all agent DROP below would
+# otherwise risk interfering with the inner `sudo`/DNS the loop/verify/launch sections
+# run as the agent uid. The narrow IMDS DROP above is safe early; this broad fence is
+# installed only after the functional contract has been proven.
+echo "== EGRESS owner-match lockdown (agent reaches ONLY loopback) =="
+# The box now has an egress path (Squid), so the agent's containment rests on this
+# per-uid OUTPUT owner-match: a loopback ACCEPT above a catch-all DROP. Prove it three
+# ways with no real internet: (A) the script installed BOTH ordered rules; (B) the
+# agent CAN still reach a 127.0.0.1 listener (the brokered path); (C) the agent CANNOT
+# reach a listener on the host's PRIMARY (eth0) IP — that traffic leaves via eth0, not
+# lo, so it hits the catch-all DROP — while root can.
+if PWFG_AGENT_USER="$AG" PWFG_EGRESS_PERSIST=0 "$BOOT/egress-lock.sh" >/dev/null 2>&1; then
+  # (A) structural: both rules landed (proves egress-lock did its job, not just netfilter)
+  allow "egress-lock installed the loopback-dest ACCEPT for the agent uid" \
+        iptables -C OUTPUT -d 127.0.0.0/8 -m owner --uid-owner "$AG" -j ACCEPT
+  allow "egress-lock installed the catch-all DROP for the agent uid" \
+        iptables -C OUTPUT -m owner --uid-owner "$AG" -j DROP
+  if command -v python3 >/dev/null 2>&1; then
+    # (B) positive: loopback (the brokering-proxy path) still works for the agent
+    python3 -m http.server 18129 --bind 127.0.0.1 >/dev/null 2>&1 &
+    lopid=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do curl -s -o /dev/null --max-time 1 http://127.0.0.1:18129/ && break; sleep 0.3; done
+    allow "agent CAN reach the loopback brokering-proxy path (127.0.0.0/8 ACCEPT above the DROP)" \
+          sudo -u "$AG" curl -s -o /dev/null --max-time 3 http://127.0.0.1:18129/
+    kill "$lopid" 2>/dev/null; wait "$lopid" 2>/dev/null
+    # (C) negative: the agent must NOT reach a NON-loopback target. The target must be
+    # genuinely off-host: a listener on the host's OWN eth0 IP would be WRONG — the
+    # kernel routes packets to local addresses out `lo`, so the loopback ACCEPT would
+    # match and the agent would be (mis)allowed. So put the listener in a network
+    # namespace reached over a veth: its IP is off-host, routed via veth (NOT lo), so
+    # the agent's packet hits the catch-all DROP while root reaches it. Gate locally
+    # (a note, never the global skip()) when netns/veth are unavailable.
+    nsip=10.231.0.2
+    if ip netns add pwfgns 2>/dev/null; then
+      EGRESS_NS=pwfgns   # created -> ensure cleanup tears it down even if setup below fails
+      if ip link add veth-pwfgh type veth peer name veth-pwfgn 2>/dev/null \
+         && ip link set veth-pwfgn netns "$EGRESS_NS" 2>/dev/null \
+         && ip addr add 10.231.0.1/24 dev veth-pwfgh 2>/dev/null \
+         && ip link set veth-pwfgh up 2>/dev/null \
+         && ip netns exec "$EGRESS_NS" ip addr add "$nsip/24" dev veth-pwfgn 2>/dev/null \
+         && ip netns exec "$EGRESS_NS" ip link set veth-pwfgn up 2>/dev/null \
+         && ip netns exec "$EGRESS_NS" ip link set lo up 2>/dev/null; then
+        ip netns exec "$EGRESS_NS" python3 -m http.server 18130 --bind "$nsip" >/dev/null 2>&1 &
+        EGRESS_PROBE_PID=$!   # kept alive for the boot-assert egress probe below; killed in cleanup
+        for _ in 1 2 3 4 5 6 7 8 9 10; do curl -s -o /dev/null --max-time 1 "http://$nsip:18130/" && break; sleep 0.3; done
+        allow "root reaches the off-host netns listener over veth (non-lo)" \
+              curl -s -o /dev/null --max-time 3 "http://$nsip:18130/"
+        deny  "agent uid is owner-match blocked from the non-lo (veth) target" \
+              sudo -u "$AG" curl -s -o /dev/null --max-time 3 "http://$nsip:18130/"
+        EGRESS_PROBE_URL="http://$nsip:18130/"
+      else
+        printf '  note  veth setup incomplete; ran structural+loopback egress checks only\n'
+      fi
+    else
+      printf '  note  netns unavailable; ran structural+loopback egress checks only\n'
+    fi
+  fi
+else
+  no "egress-lock.sh ran"
+fi
+
+echo "== boot-assert.sh passes against the in-force layout =="
+# Point boot-assert's off-box probe at the eth0-IP listener (root-reachable, agent-DROPped)
+# when we have one, so its egress assertion is deterministic + meaningful; otherwise it
+# falls back to its own default which the catch-all DROP also blocks.
+allow "boot-assert reports the boundary in force" \
+      env PWFG_SRV="$SRV" PWFG_AGENT_USER="$AG" PWFG_IMDS_IP="$IMDS_IP" PWFG_KEY_CRED="$SRV/proxy/key" \
+          ${EGRESS_PROBE_URL:+PWFG_EGRESS_PROBE="$EGRESS_PROBE_URL"} "$BOOT/boot-assert.sh"
 
 echo
 echo "== $PASS passed, $FAIL failed =="

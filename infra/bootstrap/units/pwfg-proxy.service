@@ -17,9 +17,17 @@ Environment=PWFG_PROXY_PORT=8787
 Environment=PWFG_PROXY_STATE=/srv/pwfg/proxy
 Environment=PWFG_CONTROL_DIR=/srv/pwfg/control
 Environment=PWFG_PROXY_UPSTREAM=https://api.anthropic.com
+# Reach the upstream THROUGH the in-VPC Squid forward proxy (domain allowlist). The
+# agent-host subnet is isolated; Squid is the only internet path. The real Squid
+# private IP is the PwfgEgress `SquidPrivateIp` CfnOutput — fill it OUT OF BAND (a
+# systemd drop-in, like the key), since cloud-init is static text and a CDK token
+# cannot be interpolated post-read. The placeholder fails closed (an unresolved host
+# stalls the loop rather than leaking); see docs/P1-provisioning.md.
+Environment=PWFG_PROXY_FORWARD=http://SQUID_PRIVATE_IP:3128
 # Hard ceiling — the authoritative cost cap. Tune per run.
 Environment=PWFG_PROXY_MAX_COST_USD=25.00
-ExecStart=/usr/bin/uv run --python 3.13 --with starlette --with httpx --with uvicorn python -m proxy.app
+# Pin httpx <1 so the AsyncClient(proxy=...) chaining stays API-stable at runtime.
+ExecStart=/usr/bin/uv run --python 3.13 --with starlette --with 'httpx>=0.28,<1' --with uvicorn python -m proxy.app
 WorkingDirectory=/srv/pwfg/proxy-src
 Restart=on-failure
 RestartSec=2

@@ -1,10 +1,18 @@
 """NetworkStack — the long-lived, isolated network for the agent host.
 
-A 1-AZ VPC with a single PRIVATE_ISOLATED subnet: no Internet Gateway, no NAT.
+A 1-AZ VPC with a single PRIVATE_ISOLATED subnet: this stack adds no Internet Gateway
+and no NAT (its IGW/NAT count stays 0 — the isolation claim is literally true).
 Reachability for Session Manager and logging is provided by VPC endpoints only, so
-the box has no public IP and no inbound exposure. The instance security group's
-egress is tight: 443 to the VPC (for the interface endpoints) and 443 to the git
-host CIDR. Anthropic is reached only via the on-box proxy, which egresses 443.
+the agent host has no public IP and no inbound exposure. The instance security group's
+egress is tight: 443 to the VPC (for the interface endpoints), plus an optional, now
+vestigial 443-to-`git_cidr` rule that is OFF by default (the box's egress is the Squid
+forward proxy below, not a direct SG rule; the isolated subnet has no route for it).
+
+The box's path to api.anthropic.com is added SEPARATELY by EgressStack (PwfgEgress): a
+domain-allowlist Squid forward proxy on its own public subnet, which the on-box
+brokering proxy CONNECT-tunnels through. EgressStack attaches that one egress rule
+(tcp/3128 -> the Squid SG) to this SG as a standalone SG-referenced rule, so the
+agent-host SG never gains a 0.0.0.0/0 egress (the M6 fail-closed invariant).
 """
 
 from __future__ import annotations
