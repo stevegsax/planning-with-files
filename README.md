@@ -62,8 +62,8 @@ test-planning-with-files/
 │   ├── app.py                      # shell: Starlette+httpx streaming passthrough
 │   └── tests/test_core.py          # pytest/hypothesis pure-core tests
 ├── infra/                          # P1: AWS CDK (Python) — synth + cdk-nag
-│   ├── app.py  aspects.py  stacks/ # Network / Iam / AgentHost stacks
-│   ├── bootstrap/                  # cloud-init, systemd units, sudoers, imds-lock
+│   ├── app.py  aspects.py  stacks/ # Network / Iam / AgentHost / Egress stacks
+│   ├── bootstrap/                  # cloud-init, systemd units, sudoers, imds/egress-lock, squid
 │   └── tests/test_synth.py         # offline synth + nag assertions
 └── docs/P1-provisioning.md         # the out-of-band AWS/secrets/CI deploy runbook
 ```
@@ -76,8 +76,16 @@ on-box IMDS lock, the LLM key brokered by a loopback proxy (hidden + cost-capped
 audited), and an off-box CI gate. This repo holds the offline-buildable half; see
 `docs/P1-provisioning.md` for the AWS deploy steps. The boundary itself is proven by
 `sudo tests/test_boundary.sh` (creates throwaway users and checks the agent cannot
-edit what judges it, read the key/audit, or reach IMDS — while gov still drives the
-loop to GREEN across the uid split).
+edit what judges it, read the key/audit, reach IMDS, or egress off-box — while gov
+still drives the loop to GREEN across the uid split).
+
+The agent host sits in an isolated subnet with no internet route. Its one path to
+`api.anthropic.com` is a **domain-allowlist Squid forward proxy** on a separate public
+subnet (`PwfgEgress`): the brokering proxy CONNECT-tunnels through it (TLS end-to-end,
+so Squid never sees the key), the agent-host security group egresses only to the Squid
+SG (never `0.0.0.0/0`), and an `egress-lock` owner-match fences the `agent` uid to
+loopback so even a prompt-injected agent reaches nothing but the local proxy. ~$7/mo
+for a `t4g.nano` (vs ~$290/mo for AWS Network Firewall — overkill for one disposable box).
 
 ## Run the deterministic self-test
 

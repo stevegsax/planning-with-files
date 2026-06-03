@@ -1,0 +1,21 @@
+[Unit]
+Description=pwfg agent-uid egress owner-match lock (loopback only; re-applied every boot)
+# Re-install the agent-uid loopback-only OUTPUT owner-match on EVERY boot rather than
+# relying on iptables-save / netfilter-persistent (inert on AL2023). Must be in force
+# before any agent session can start, so it precedes the proxy/loop/boot-assert — this
+# closes the fail-open window (an agent that started before the fence could egress).
+DefaultDependencies=no
+After=local-fs.target network-pre.target
+Before=pwfg-boot-assert.service pwfg-proxy.service pwfg-loop.service network-online.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PWFG_AGENT_USER=agent
+# Persistence is now this unit (every boot); the in-script iptables-save is best-effort.
+Environment=PWFG_EGRESS_PERSIST=0
+ExecStart=/srv/pwfg/bin/egress-lock.sh
+
+[Install]
+WantedBy=multi-user.target

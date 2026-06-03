@@ -12,12 +12,16 @@
 #   PWFG_AGENT_USER=agent             the unprivileged uid
 #   PWFG_IMDS_IP=169.254.169.254      the metadata endpoint
 #   PWFG_KEY_CRED=<srv>/proxy/key     a file the agent must NOT be able to read
+#   PWFG_EGRESS_PROBE=https://api.anthropic.com  an off-box URL the agent must NOT reach
+#       (on the box, set this to the Squid endpoint http://<squid-ip>:3128 — the one
+#        path the agent could otherwise route to + the SG permits — for the sharpest check)
 set -uo pipefail
 
 SRV="${PWFG_SRV:-/srv/pwfg}"
 AGENT_USER="${PWFG_AGENT_USER:-agent}"
 IMDS_IP="${PWFG_IMDS_IP:-169.254.169.254}"
 KEY_CRED="${PWFG_KEY_CRED:-$SRV/proxy/key}"
+EGRESS_PROBE="${PWFG_EGRESS_PROBE:-https://api.anthropic.com}"
 
 fail=0
 ok()  { printf '  ok   %s\n' "$1"; }
@@ -35,6 +39,16 @@ if as_agent curl -s -o /dev/null --max-time 3 "http://$IMDS_IP/latest/meta-data/
   no "agent CAN reach IMDS ($IMDS_IP) — the role is exfiltratable"
 else
   ok "agent cannot reach IMDS ($IMDS_IP)"
+fi
+
+# 2b. the agent must NOT egress off-box directly. The box now HAS an egress path (the
+#     Squid forward proxy), so the agent's containment rests on the egress-lock
+#     owner-match: its only outbound is the loopback brokering proxy. A SUCCESS here
+#     means the fence is missing/mis-ordered (e.g. egress-lock did not run) — fail.
+if as_agent curl -s -o /dev/null --max-time 3 "$EGRESS_PROBE" 2>/dev/null; then
+  no "agent CAN egress off-box ($EGRESS_PROBE) — the egress fence is broken"
+else
+  ok "agent cannot egress off-box ($EGRESS_PROBE)"
 fi
 
 # 3. the agent env must carry no LLM credential (it reaches Anthropic via the proxy).

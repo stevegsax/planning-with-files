@@ -1,0 +1,57 @@
+#cloud-config
+# user-data for the EGRESS box ONLY (the t4g.nano Squid forward proxy). This file is
+# rendered into the Squid instance's user-data by EgressStack; it is never installed on
+# the agent host. Squid is the box's single, domain-allowlisted path to the internet:
+# the on-box brokering proxy CONNECT-tunnels api.anthropic.com through it, so TLS stays
+# end-to-end to Anthropic and Squid only ever sees/enforces the CONNECT host. The agent
+# uid cannot reach this box at all (the on-box egress-lock owner-match drops every
+# non-loopback packet from the agent); only the proxy/gov/root uids originate CONNECTs.
+write_files:
+  - path: /etc/squid/squid.conf
+    permissions: "0644"
+    content: |
+      # --- pwfg egress forward proxy: CONNECT to an explicit-host allowlist only ---
+      # Match the CONNECT host EXACTLY (api.anthropic.com), never a .anthropic.com
+      # wildcard subtree, to minimize any domain-fronting surface.
+      acl SSL_ports port 443
+      acl CONNECT method CONNECT
+      acl anthropic dstdomain api.anthropic.com
+      # Belt-and-suspenders behind the SG: only the agent host's isolated subnet may
+      # use the proxy (a real second barrier independent of the SG, not the whole VPC).
+      # This is the default PRIVATE_ISOLATED /24; adjust if you re-CIDR the subnet.
+      acl pwfg_src src 10.0.0.0/24
+
+      # Permit ONLY CONNECT (no plain HTTP forward-proxying), only to 443, only from
+      # the in-VPC source, only to the allowlisted host. Everything else is denied.
+      http_access deny !CONNECT
+      http_access deny CONNECT !SSL_ports
+      http_access deny !pwfg_src
+      http_access allow pwfg_src CONNECT anthropic SSL_ports
+      http_access deny all
+
+      # Escape hatches (DISABLED by default — keep the surface minimal):
+      #   on-box gov-run git over HTTPS:  acl githost dstdomain github.com
+      #                                   http_access allow pwfg_src CONNECT githost SSL_ports
+      #   unprimed PyPI dep (a smell — prefer re-priming the uv cache, UV_OFFLINE=1):
+      #                                   acl pypi dstdomain pypi.org files.pythonhosted.org
+      #                                   http_access allow pwfg_src CONNECT pypi SSL_ports
+
+      http_port 3128
+      # We only tunnel CONNECT; there is nothing to cache.
+      cache deny all
+      # Do not advertise the box; quieten access noise to the audit minimum.
+      httpd_suppress_version_string on
+      forwarded_for delete
+
+runcmd:
+  # Retry the install: even with the CFN route/association dependency, route
+  # propagation can lag the instance boot by seconds. No `set -e` — we WANT to retry,
+  # not abort, on a transient 'no route to host' so a brief delay can't wedge the box.
+  - |
+    set -uxo pipefail
+    for i in 1 2 3 4 5 6; do
+      dnf install -y squid && break
+      echo "squid install attempt $i failed (egress route not ready?); retrying..." >&2
+      sleep 15
+    done
+    systemctl enable --now squid

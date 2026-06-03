@@ -55,6 +55,11 @@ class Config:
     sentinel_path: Path
     kill_path: Path
     caps: core.Caps
+    # Optional forward proxy (the in-VPC Squid domain-allowlist box) the upstream is
+    # reached THROUGH. None = connect directly (the default; the deterministic tests
+    # hit the fake upstream directly). For an https:// upstream over an http:// proxy,
+    # httpx auto-issues CONNECT, so TLS stays end-to-end and the key never reaches Squid.
+    forward_proxy: str | None = None
 
 
 def _read_key() -> str:
@@ -85,6 +90,7 @@ def config_from_env() -> Config:
             max_cost_usd=Decimal(max_cost) if max_cost else None,
             max_requests=int(max_reqs) if max_reqs else None,
         ),
+        forward_proxy=(os.environ.get("PWFG_PROXY_FORWARD") or "").strip() or None,
     )
 
 
@@ -147,7 +153,16 @@ class Broker:
     def __init__(self, cfg: Config) -> None:
         self._cfg = cfg
         self._lock = asyncio.Lock()
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=10.0))
+        # Reach the upstream THROUGH the forward proxy when configured (the in-VPC
+        # Squid box); proxy= is the httpx 0.28 spelling (the old proxies= was removed).
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(600.0, connect=10.0),
+            proxy=cfg.forward_proxy,
+            # Never chase redirects: the upstream authority is fixed (cfg.upstream) and
+            # the inbound Host is stripped, so following a 3xx would be the one lever an
+            # agent-controlled path could use to reach another host. Pass 3xx back as-is.
+            follow_redirects=False,
+        )
         self._ledger = (
             core.ledger_from_json(cfg.ledger_path.read_text())
             if cfg.ledger_path.is_file()
@@ -223,7 +238,16 @@ class Broker:
         upstream_req = self._client.build_request(
             request.method, url, headers=out_headers, content=body
         )
-        upstream = await self._client.send(upstream_req, stream=True)
+        # Fail closed with a shaped error if the upstream / forward proxy is unreachable
+        # (e.g. an unconfigured PWFG_PROXY_FORWARD placeholder, or Squid down): a clear
+        # 502 + audit line, not an opaque 500, and never a direct-egress fallback.
+        try:
+            upstream = await self._client.send(upstream_req, stream=True)
+        except httpx.HTTPError as exc:
+            await self._record(model, core.Usage(), "error:upstream-unreachable")
+            return self._deny_response(
+                f"upstream/forward-proxy unreachable: {type(exc).__name__}", 502
+            )
 
         resp_headers = {
             k: v

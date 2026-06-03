@@ -16,9 +16,12 @@ runcmd:
   - set -euxo pipefail
   - /opt/pwfg/bootstrap/bin/bootstrap.sh
   - PWFG_AGENT_USER=agent /opt/pwfg/bootstrap/bin/imds-lock.sh
+  # Fence the agent uid to loopback-only BEFORE any agent session can start.
+  - PWFG_AGENT_USER=agent /opt/pwfg/bootstrap/bin/egress-lock.sh
   - systemctl daemon-reload
-  # Re-applies the IMDS lock on every subsequent boot (the first boot applied it above).
+  # Re-apply both owner-match locks on every subsequent boot (first boot applied them above).
   - systemctl enable --now pwfg-imds-lock.service
+  - systemctl enable --now pwfg-egress-lock.service
   - systemctl enable --now pwfg-boot-assert.service
   - systemctl enable --now pwfg-proxy.service
   - systemctl enable --now pwfg-loop.service
