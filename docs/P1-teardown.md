@@ -24,8 +24,14 @@ npx cdk@2 destroy --force \
 
 This terminates both instances (EBS volumes are `delete_on_termination=True`), removes
 the IGW + public subnet + route tables, the VPC + the four interface endpoints + the S3
-gateway endpoint, the security groups, the IAM role, and the flow-log group the VPC
-created. Termination protection is off by design, so nothing blocks the destroy.
+gateway endpoint, the security groups, and the IAM role. Termination protection is off
+by design, so nothing blocks the destroy.
+
+One thing typically **survives**: the VPC flow-log's CloudWatch log group (CDK log
+groups default to a *retain* removal policy). If `cdk destroy` reports it could not
+delete the group, or you want a truly clean slate, delete it by hand:
+`aws logs describe-log-groups --query 'logGroups[?contains(logGroupName,\`FlowLog\`)].logGroupName'`
+then `aws logs delete-log-group --log-group-name <name>`.
 
 If `cdk` is unavailable, delete the CloudFormation stacks in the same order from the
 console (CloudFormation → select stack → Delete), or:
