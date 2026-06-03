@@ -200,16 +200,10 @@ green**, never on-box status.
 
 ## 7. Teardown (reverse order)
 
-`cdk destroy` in **reverse** so the cross-stack export + sole egress release cleanly:
-
-```
-npx cdk@2 destroy PwfgEgress PwfgAgentHost PwfgIam PwfgNetwork
-```
-
-`PwfgEgress` imports the agent-host SG from `PwfgNetwork` (the SG-referenced egress rule
-that keeps M6 green), so that export is locked while `PwfgEgress` exists — Egress must go
-first. Per the design, key any "complete"/teardown decision off **off-box CI green**, not
-on-box status.
+`cdk destroy` in **reverse** (`PwfgEgress → PwfgAgentHost → PwfgIam → PwfgNetwork`) so the
+cross-stack SG export + the sole egress release cleanly. Full step-by-step shutdown,
+what persists out-of-band, the stop-but-keep option, and the cost-verification commands
+are in **`docs/P1-teardown.md`**.
 
 ## Conventions reused (not reinvented)
 
