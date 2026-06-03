@@ -1,0 +1,21 @@
+[Unit]
+Description=pwfg key delivery (fetch the brokered Anthropic key from SSM to /run/pwfg)
+# The proxy LoadCredential=s /run/pwfg/anthropic_key, and boot-assert FAILS the boot if
+# it is absent — so this must run, successfully, before both. /run is tmpfs (wiped each
+# boot), so RuntimeDirectory recreates /run/pwfg every boot. Needs the SSM interface
+# endpoint reachable; root is unaffected by the agent egress owner-match.
+After=network-online.target pwfg-imds-lock.service pwfg-egress-lock.service
+Wants=network-online.target
+Before=pwfg-proxy.service pwfg-boot-assert.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+RuntimeDirectory=pwfg
+RuntimeDirectoryMode=0710
+Environment=PWFG_KEY_PARAM=pwfg/anthropic-key
+Environment=PWFG_KEY_OUT=/run/pwfg/anthropic_key
+ExecStart=/srv/pwfg/bin/fetch-key.sh
+
+[Install]
+WantedBy=multi-user.target

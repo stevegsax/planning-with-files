@@ -34,6 +34,12 @@ as_agent() { sudo -u "$AGENT_USER" "$@"; }
 if command -v timeout >/dev/null 2>&1; then ok "coreutils 'timeout' present (wedge detection armed)"
 else no "coreutils 'timeout' MISSING — wedge detection would be disabled"; fi
 
+# 1b. curl is REQUIRED for the egress negatives to be meaningful: a missing curl makes
+#     `as_agent curl` exit non-zero, which would read as "blocked" (a vacuous pass that
+#     certifies the fence without testing it). Treat its absence as a hard failure.
+if command -v curl >/dev/null 2>&1; then ok "curl present (the egress probes actually run)"
+else no "curl MISSING — the egress negative assertions would pass vacuously"; fi
+
 # 2. the agent must NOT reach IMDS (else the instance role is a secret backdoor).
 if as_agent curl -s -o /dev/null --max-time 3 "http://$IMDS_IP/latest/meta-data/" 2>/dev/null; then
   no "agent CAN reach IMDS ($IMDS_IP) — the role is exfiltratable"

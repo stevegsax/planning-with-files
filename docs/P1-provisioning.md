@@ -9,19 +9,58 @@ secrets / real GitHub — they cannot run in the build container.
 The deploy order is risk-first: prove reachability before adding capability, prove
 the boundary before running an agent.
 
+> **Build-first blockers (a stock `main` deploy will NOT boot a working box yet).**
+> The offline build never had to get code/runtime/secrets onto an *isolated* box. Until
+> these are closed in-repo, the box boots into a broken state — close or consciously
+> waive each before deploying (see `deploy-readiness-worksheet.md §A`):
+> 1. **Code delivery** — nothing places `/opt/pwfg` on the box (cloud-init runs
+>    `bootstrap.sh` from a path that does not exist). Pick a delivery method (§B of the
+>    worksheet; S3-via-gateway-endpoint recommended).
+> 2. **Runtime toolchain** — `claude`/`uv`/`jq`/`git`/`timeout`/`curl` are not installed
+>    and the isolated subnet cannot fetch them; they must ride the same channel as the code.
+> 3. **Offline uv cache** — proofs/proxy `uv run --with …` need PyPI + a managed CPython;
+>    prime a `UV_CACHE_DIR` and export `UV_OFFLINE=1` / `UV_PYTHON_DOWNLOADS=never`.
+> 4. **Key + Squid-IP wiring** — `pwfg-key-fetch.service` (shipped) fills
+>    `/run/pwfg/anthropic_key`; you must still write the `PWFG_PROXY_FORWARD` /
+>    `PWFG_EGRESS_PROBE` drop-ins with the real Squid IP (§3b, §2).
+
 ## 0. Prerequisites you provision
 
 | Thing | Notes |
 |-------|-------|
-| AWS account + region | Graviton (`t4g`) AL2023 is used; pick a region with it. |
+| AWS account + region | Graviton (`t4g`) AL2023 is used; pick a region offering it in AZ[0]. |
 | Dedicated Anthropic API key + budget | Brokered by the proxy; never handed to the agent. |
-| Two GitHub repos | `pwfg-acceptance` (protected, holds `locked/` + `skill/`, RO to the agent) and `pwfg-impl` (throwaway, the agent pushes here; intermediate commits may be RED). |
-| SSM SecureStrings | `pwfg/anthropic-key` (the LLM key) and `pwfg/git-deploy-key` (RO deploy key for cloning). |
-| Customer-managed KMS CMK | Encrypts the two SecureStrings; the role decrypts `kms:ViaService=ssm` only. |
-| CloudWatch log group | `/pwfg/audit` for journald + proxy audit shipping. |
+| Two GitHub repos | `pwfg-acceptance` (protected) + `pwfg-impl` (throwaway). Only needed when wiring the off-box CI gate (§6). |
+| SSM SecureStrings | `pwfg/anthropic-key` (the LLM key) and `pwfg/git-deploy-key`. |
+| Customer-managed KMS CMK | Encrypts the SecureStrings; **its key policy must grant the AgentHostRole `kms:Decrypt` via SSM** — the IAM-side grant alone does not authorize a customer CMK. |
+| CloudWatch log group | `/pwfg/audit` (the role has `PutLogEvents`/`CreateLogStream`, NOT `CreateLogGroup` — it must pre-exist). |
 
-Create the SecureStrings + CMK **before** deploy and pass their ARNs as CDK context
-(never synthesize secret values into the template).
+Exact commands (capture each ARN into `deploy-readiness-worksheet.md §C`):
+
+```
+# A fresh account needs CDK's bootstrap stack before any deploy:
+npx cdk@2 bootstrap aws://<acct>/<region>
+
+# Confirm t4g is offered in the AZ you'll use:
+aws ec2 describe-instance-type-offerings --location-type availability-zone \
+  --filters Name=instance-type,Values=t4g.small Name=location,Values=<az> --region <region>
+
+# CMK with a key policy that lets the instance role decrypt via SSM (and keeps IAM delegation):
+aws kms create-key --description pwfg --policy "$(cat cmk-policy.json)"   # see below
+aws kms create-alias --alias-name alias/pwfg --target-key-id <key-id>
+
+# The two SecureStrings, encrypted under that CMK:
+aws ssm put-parameter --name pwfg/anthropic-key  --type SecureString --key-id alias/pwfg --value '<live-anthropic-key>'
+aws ssm put-parameter --name pwfg/git-deploy-key --type SecureString --key-id alias/pwfg --value "$(cat deploy_key)"
+
+# The audit log group (the role cannot create it):
+aws logs create-log-group --log-group-name /pwfg/audit
+```
+
+`cmk-policy.json` must include the standard root delegation **and** an explicit
+`kms:Decrypt`/`DescribeKey` allow for the `AgentHostRole` ARN, conditioned on
+`kms:ViaService=ssm.<region>.amazonaws.com`. A default console CMK (root-only policy)
+deploys cleanly then strands the proxy keyless with `AccessDenied` at runtime.
 
 ## 1. SSM reachability spike (de-risk first)
 
@@ -111,13 +150,16 @@ prompt-injected agent cannot reach Squid or anything else but the local proxy.
 
 ## 4. Key delivery + proxy + the real-key smoke
 
-Deliver the SSM SecureString to `/run/pwfg/anthropic_key` (root-owned, `0400`) at
-boot — e.g. a root oneshot doing `aws ssm get-parameter --with-decryption` — so
-`pwfg-proxy.service` can `LoadCredential=` it into the kernel keyring. The agent env
-never holds the key.
+Key delivery is shipped as **`pwfg-key-fetch.service`** (root oneshot,
+`RuntimeDirectory=pwfg` so `/run/pwfg` exists on tmpfs, ordered `Before` the proxy +
+boot-assert): it runs `bin/fetch-key.sh`, which `aws ssm get-parameter --with-decryption`
+writes `/run/pwfg/anthropic_key` (root `0400`) so `pwfg-proxy.service` can
+`LoadCredential=` it into the kernel keyring. The agent env never holds the key. (The
+role already permits `ssm:GetParameter` + `kms:Decrypt`-via-SSM — no policy change.)
 
-Run the one step that needs the live key (outside the deterministic suite): a
-**gov-run real-key smoke** confirming `claude -p` drives cleanly along the full path
+Run the one step that needs the live key (outside the deterministic suite) via
+**`skill/bin/smoke-proxy.sh`** (gov-run, on the box): it confirms `claude -p` drives
+cleanly along the full path
 — agent → loopback proxy (`ANTHROPIC_BASE_URL=http://127.0.0.1:8787`) → Squid CONNECT
 (`PWFG_PROXY_FORWARD`) → `api.anthropic.com` — that `audit.jsonl` records the call, and
 that the key appears in **neither** the audit nor journald (nor on the Squid box, which
@@ -136,11 +178,13 @@ Select the example for the run (`locked/` for `toy` or `ledger`) into
 `/srv/pwfg/locked` and set `PWFG_PLAN` in `/srv/pwfg/gov/env`. Let the loop drive a
 session and confirm:
 
-- **REQUIRED negative test (plan risk #3):** as the agent, edit a workspace
-  `.claude/settings.json` (and `~/.claude/settings.json`) to remove/replace the Stop
-  hook, then let a session end RED — the loop must **still gate** (the gov hook
-  arrives via `--settings` and cannot be dropped). If it does not, adjust
-  `--setting-sources` in `bin/launch-agent.sh` until it does.
+- **REQUIRED negative test (plan risk #3)** via **`skill/bin/smoke-stop-hook.sh`**: as
+  the agent, edit a workspace `.claude/settings.json` (and the `CLAUDE_CONFIG_DIR`
+  `settings.json`) to remove/replace the Stop hook, then let a session end RED — the
+  loop must **still gate** (the gov hook arrives via `--settings` and cannot be
+  dropped). If it does not, adjust `CLAUDE_CONFIG_DIR` / `--setting-sources` in
+  `bin/launch-agent.sh` until it does. **This has never been verified on a real box —
+  it gates the deploy.**
 - the agent reaches the verifier only via `sudo -u gov verify-*.sh`;
 - `status.json` / `loop.json` / `BLOCKED` are gov-owned in the state dir.
 
@@ -154,9 +198,24 @@ agent's repo-scoped credential cannot push to `pwfg-acceptance`. Wire CI-green i
 `skill/bin/notify.sh` (a `PWFG_NOTIFY_CMD` consumer) and key any teardown off **CI
 green**, never on-box status.
 
+## 7. Teardown (reverse order)
+
+`cdk destroy` in **reverse** so the cross-stack export + sole egress release cleanly:
+
+```
+npx cdk@2 destroy PwfgEgress PwfgAgentHost PwfgIam PwfgNetwork
+```
+
+`PwfgEgress` imports the agent-host SG from `PwfgNetwork` (the SG-referenced egress rule
+that keeps M6 green), so that export is locked while `PwfgEgress` exists — Egress must go
+first. Per the design, key any "complete"/teardown decision off **off-box CI green**, not
+on-box status.
+
 ## Conventions reused (not reinvented)
 
 - `PWFG_LAUNCH_CMD` seam (`run-loop.sh`) → `bin/launch-agent.sh` (sudo→agent).
 - `PWFG_ENV_FILE` hook (`common.sh`) → sudo-invoked tools recover `PWFG_*`.
 - `PWFG_PROOF_AS=agent` (`common.sh`) → proofs (which import agent code) run as agent.
 - `notify.sh` / the audit JSONL conventions → off-box notification + per-call audit.
+
+See `deploy-readiness-worksheet.md` for the fill-in prerequisites + on-box smoke checklist.

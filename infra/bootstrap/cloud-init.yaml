@@ -22,6 +22,9 @@ runcmd:
   # Re-apply both owner-match locks on every subsequent boot (first boot applied them above).
   - systemctl enable --now pwfg-imds-lock.service
   - systemctl enable --now pwfg-egress-lock.service
+  # Fetch the brokered key to /run/pwfg BEFORE boot-assert (which fails the boot if it
+  # is absent) and the proxy (which LoadCredential=s it).
+  - systemctl enable --now pwfg-key-fetch.service
   - systemctl enable --now pwfg-boot-assert.service
   - systemctl enable --now pwfg-proxy.service
   - systemctl enable --now pwfg-loop.service
